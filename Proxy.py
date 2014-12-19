@@ -4,6 +4,7 @@ import SocketServer
 import SimpleHTTPServer
 import urllib
 import subprocess
+import re
 
 
 PORT = 1234  # port that proxy listens on
@@ -27,18 +28,25 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
     def check_user_agent_string(self, ip_address, user_agent):
         if user_agent == "":  # if no user agent string sent block IP address
             rule = "\niptables -A INPUT -s " + ip_address + " -j DROP"
-            rules = open("rules.sh", "a")
-            rules.write(rule)
+            rules = open('rules.sh', 'r')
+            regex = re.compile(ip_address, re.MULTILINE)
+            match = regex.search(rules.read())
             rules.close()
-            subprocess.call(["chmod", "755", "rules.sh"])
-            subprocess.call("./rules.sh")
-            print("IP address " + ip_address + " blocked, no user agent string")
-
+            # check if a rule to block this ip has already been written, this can happen due to forking
+            if not match:
+                rules = open("rules.sh", "a")
+                rules.write(rule)
+                rules.close()
+                subprocess.call(["chmod", "755", "rules.sh"])
+                subprocess.call("./rules.sh")
+                print("IP address " + ip_address + " blocked, no user agent string")
 
 httpd = SocketServer.ForkingTCPServer(('', PORT), Proxy)
 print('Proxy is running on port ', PORT)
-
 httpd.serve_forever()
+
+
+
 
 
 
