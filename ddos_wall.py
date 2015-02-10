@@ -17,7 +17,8 @@ if __name__ == '__main__':
      will automatically attempt to detect.  The offending IP addresses will be blocked.  """
 
     parser = optparse.OptionParser(description=description)
-    parser.add_option('-c', '--cpu', default=0, help='threshold for CPU usage')
+    parser.add_option('-c', '--cpu_orange', default=0, help='orange threshold for CPU utilisation')
+    parser.add_option('-C', '--cpu_red', default=0, help='red threshold for CPU utilisation')
     parser.add_option('-m', '--memory', default=0, help='threshold for RAM usage')
     parser.add_option('-n', '--network', default=0, help='threshold for Network usage')
     parser.add_option('-p', '--port', default=1234, help='port that proxy listens on')
@@ -37,13 +38,16 @@ if __name__ == '__main__':
 
     PORT = opts.port  # port that proxy listens on
     SERVER_IP = opts.ip_address  # IP address of server
-    CPU_THRESHOLD = opts.cpu
+    CPU_ORANGE_THRESHOLD = opts.cpu_orange
+    CPU_RED_THRESHOLD = opts.cpu_red
     RAM_THRESHOLD = opts.memory
     NETWORK_THRESHOLD = opts.network
     TIME_PERIOD = opts.time  # how long in minutes the running average for the monitoring should be
     INTERVAL = opts.interval  # length of tim in seconds between polling resource
     SETUP = opts.setup  # If setup needs running
     RESET = opts.reset  # Reset DDoS_Wall
+    system_status = 'green'  # The current state that the system is in
+    syn_cookies = 0
 
 
 def write_firewall_script():
@@ -131,12 +135,16 @@ class Monitoring(threading.Thread):
         resource.  If the resource exceeds the threshold SYN cookies are turned on and the polling
         stop
         """
+        global system_status
+        global syn_cookies
 
         #  Check which resources should be monitored
-        if CPU_THRESHOLD > 0:
+        if CPU_ORANGE_THRESHOLD > 0:
             resource = "cpu"
-            print("CPU is being monitored, threshold set at %s" % CPU_THRESHOLD)
-            resource_threshold = CPU_THRESHOLD
+            print("CPU is being monitored, orange threshold set at %s, red threshold set to %s"
+                  % (CPU_ORANGE_THRESHOLD, CPU_RED_THRESHOLD))
+            resource_orange_threshold = float(CPU_ORANGE_THRESHOLD)
+            resource_red_threshold = float(CPU_RED_THRESHOLD)
         elif NETWORK_THRESHOLD > 0:
             resource = "network"
             print("Network usage is being monitored, threshold set at %s" % NETWORK_THRESHOLD)
@@ -152,11 +160,30 @@ class Monitoring(threading.Thread):
         print("System monitor engaged")
         while True:
             system_load = float(get_mean(stats))
-            print("System load", system_load, " Threshold", resource_threshold)
-            if system_load > float(resource_threshold):
-                print("Turning on SYN Cookies")
-                self.turn_on_syn_cookies()
-                break
+            print "System load is %s" % system_load
+            #  If system load below orange threshold change status to green
+            if system_load < resource_orange_threshold and system_status != 'green':
+                system_status = 'green'
+                print("ALERT: System status green")
+            #  If system load exceeds orange threshold change status to orange
+            elif system_load  >= resource_orange_threshold  \
+                    and system_load < resource_red_threshold and system_status != 'orange':
+                system_status = 'orange'
+                print("ALERT: System status updated to orange")
+                if syn_cookies == 0:
+                    print("Turning on SYN Cookies")
+                    self.turn_on_syn_cookies()
+                    syn_cookies = 1
+            #  If system load exceeds red threshold change system status to red
+            elif system_load > resource_red_threshold and system_status != 'red':
+                system_status = 'red'
+                print("WARNING: System status updated to Red")
+            else:
+                print("No conditions met")
+                print("Status: %s, System_load: %s, Orange_threshold: %s, Red_threshold: %s " %
+                      (system_status, system_load, resource_orange_threshold, resource_red_threshold))
+
+
             stats = self.update_system_load(INTERVAL, stats, resource)
 
 
@@ -202,7 +229,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
 
 def start_ddos_wall():
-    "This method starts DDoS wall running"
+    """This method starts DDoS wall running"""
     if SETUP or RESET:
         write_firewall_script()
     httpd = SocketServer.ForkingTCPServer(('', PORT), Proxy)
