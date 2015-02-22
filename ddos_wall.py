@@ -235,43 +235,98 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             rules.close()
             subprocess.call(["chmod", "755", "rules.sh"])
             subprocess.call("./rules.sh")
-            print("IP address " + ip_address + " blocked, no user agent string")
+            print("IP address " + ip_address + " blocked")
 
-    def check_user_agent_string(self, user_agent, score):
+    def check_user_agent_string(self, user_agent, current_connection, thread_lock):
         """ This method check if the current connection has provided a user agent string if it has not 100
          point are deducted from the current connections score
-        :param user_agent: The user agent string of the current connecection
+        :param user_agent: The user agent string of the current connection
         :param score: The score of the current connection
         :return: updated score
         """
         if user_agent == "":
-            score -= 100
-        return score
+            self.update_score(current_connection, -100, thread_lock)
 
-    def get_current_connection_score(self, ip_address, thread_lock):
+    def update_score(self, current_connection, number, thread_lock):
         """
-        This Method get the score of the current connection.  If the connection does not already have n entry
-        in the connection cache then a entry is added.
+        This method updates the score for the current connection
+        :param current_connection: the connection cache dict for the current connection
+        :param number: integer, the amount to be added to the score
+        :param thread_lock: threading.Lock
+        :return: None
+        """
+        thread_lock.acquire()
+        current_connection['score'] += number
+        thread_lock.release()
+
+    def calculate_request_interval_average(self, current_connection):
+        """
+        This method calculates the average interval between requests
+        :param current_connection: the connection cache dict for the current connection
+        :return: float, average interval between connections
+        """
+        global connection_cache
+        connection_times = current_connection['connection_times']
+        connection_times.append(time.time())
+        previous_connection_time = 0
+        connection_intervals = list()
+        not_first_iteration = False
+        for con in connection_times:
+            if not_first_iteration:
+                connection_intervals.append(con - previous_connection_time)
+            previous_connection_time = con
+            not_first_iteration = True
+        if connection_intervals:
+            avg = get_mean(connection_intervals)
+            return avg
+
+    def calculate_request_threshold(self, requests_per_second):
+        """
+        This method calculates the request threshold based on how many requests
+        per second will be tolerated before marking the connection as suspicious
+        :param requests_per_second: integer
+        :return: request_threshold float
+        """
+        request_threshold = 1.0 / float(requests_per_second)
+        return request_threshold
+
+    def check_time_based_connection_threshold(self, current_connection, thread_lock):
+        """
+        This method checks if the frequency of request from the current connection
+        is above the threshold and if so deducts 100 from the connection score
+        :param current_connection: the connection cache dict for the current connection
+        :return: none
+        """
+        threshold = self.calculate_request_threshold(10)
+        interval_average = self.calculate_request_interval_average(current_connection)
+        if interval_average is not None:
+            if interval_average < threshold:
+                self.update_score(current_connection, -100, thread_lock)
+
+    def get_current_connection(self, ip_address):
+        """
+        This Method gets the current connection from the connection cache.  If the connection does not already have an
+        entry it return None
         :param ip_address: The ip_address of the current connection
-        :param thread_lock: instance of threading.lock
-        :return: the current connections score
+        :return: dict for current connection
         """
         global connection_cache
         try:  # Try to find the current connection in the connection cache and return the score.
             current_connection = (item for item in connection_cache if item['ip_address'] == ip_address).next()
-            return current_connection['score']
+            return current_connection
         except StopIteration:  # If the IP address is not found in the connection cache add entry with score of 0.
-            thread_lock.acquire()
-            connection_cache.append({'ip_address': ip_address, 'score': 0})
-            thread_lock.release()
-            return 0
+            return None
 
-    def update_current_connection_score(self, ip_address, score, thread_lock):
+    def add_connection_cache_entry(self, ip_address, thread_lock):
+        thread_lock.acquire()
+        connection_cache.append({'ip_address': ip_address,
+                                 'score': 0,
+                                 'connection_times': []})
+        thread_lock.release()
+
+    def test_connection_score(self, current_connection):
         """
-        Thus method updates the current connections score with an new score.  It also 
-        :param ip_address: IP address of the current connection
-        :param score:  The new score to update the original score with
-        :param thread_lock: instance of threading.lock
+        This method test if the connection should be blocked based on th current system status
         :return: none
         """
         global connection_cache
@@ -279,27 +334,32 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         global orange_score
         global system_status
 
-        try:  #  try to find the current connection in the coonection  cache
-            current_connection = (item for item in connection_cache if item['ip_address'] == ip_address).next()
-            thread_lock.acquire()
-            current_connection['score'] = score
-            thread_lock.release()
-            if system_status == 'orange':
-                if score <= orange_score:
-                    self.block_ip_address(current_connection['ip_address'])
-            elif system_status == 'red':
-                if score <= red_score:
-                    self.block_ip_address(current_connection['ip_address'])
-        except StopIteration:
-            print("Something went wrong unable to find ip address %s" % ip_address)
-            print(connection_cache)
+        if system_status == 'orange':
+            if current_connection['score'] <= orange_score:
+                self.block_ip_address(current_connection['ip_address'])
+        elif system_status == 'red':
+            if current_connection['score'] <= red_score:
+                self.block_ip_address(current_connection['ip_address'])
+
 
     def process_connection(self, ip_address, user_agent):
+        """
+        This method check if current connection has an entry in the connection cache and
+        if not creates one.  It then runs the anomaly detection algorithms which updates
+        the connection score, if the score falls below threshold for the current state
+        of the system the connection is blocked.
+        :param ip_address: string, IP address of current connection
+        :param user_agent: string, User Agent string of the current connection
+        :return: None
+        """
         thread_lock = threading.Lock()
-        score = self.get_current_connection_score(ip_address, thread_lock)
-        score = self.check_user_agent_string(user_agent, score)
-        self.update_current_connection_score(ip_address, score, thread_lock)
-
+        current_connection = self.get_current_connection(ip_address)
+        if current_connection is None:
+            self.add_connection_cache_entry(ip_address, thread_lock)
+            current_connection = self.get_current_connection(ip_address)
+        self.check_user_agent_string(user_agent, current_connection, thread_lock)
+        self.check_time_based_connection_threshold(current_connection, thread_lock)
+        self.test_connection_score(current_connection)
 
 def start_ddos_wall():
     """This method starts DDoS wall running"""
