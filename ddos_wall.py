@@ -10,6 +10,7 @@ import optparse
 from ddosw_baseline import get_mean
 import threading
 
+
 if __name__ == '__main__':
     description = """DDoS_Wall is designed to stop common types of DDoS attacks.  It offers system
      monitoring and will enable TCP cookies if the system is potentially under attack, this helps
@@ -48,6 +49,11 @@ if __name__ == '__main__':
     RESET = opts.reset  # Reset DDoS_Wall
     system_status = 'green'  # The current state that the system is in
     syn_cookies = 0
+    initial_score = 0
+    orange_score = -500
+    red_score = -200
+    connection_cache = list()
+
 
 
 def write_firewall_script():
@@ -137,7 +143,6 @@ class Monitoring(threading.Thread):
         """
         global system_status
         global syn_cookies
-
         #  Check which resources should be monitored
         if CPU_ORANGE_THRESHOLD > 0:
             resource = "cpu"
@@ -201,38 +206,106 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         except:
             user_agent = ""
         ip_address = self.client_address[0]  # get client iP address
-        print(user_agent)
-        self.check_user_agent_string(ip_address, user_agent)
+        if user_agent == "":
+            print("No user agent")
+        else:
+            print(user_agent)
+        global connection_cache
+        print("connection_cache before processing: ", connection_cache)
+        self.process_connection(ip_address, user_agent)
+        print("connection_cache after processing: ", connection_cache)
 
-    #
-    def check_user_agent_string(self, ip_address, user_agent):
+
+    def block_ip_address(self, ip_address):
         """
-        This method check the user_agent string.  IF any anomalies are discovered that indicate
-        that the request may be part of a DDoS attack it is blocked
+        This method write a rule to the firewall that blocks the
+        supplied IP address
         :param ip_address: ip address of requesting client
-        :param user_agent: the user agent string from the HTTP request
         """
-        if user_agent == "":  # if no user agent string sent block IP address
-            rule = "\niptables -A INPUT -s " + ip_address + " -j DROP"
-            rules = open('rules.sh', 'r')
-            regex = re.compile(ip_address, re.MULTILINE)
-            match = regex.search(rules.read())
+
+        rule = "\niptables -A INPUT -s " + ip_address + " -j DROP"
+        rules = open('rules.sh', 'r')
+        regex = re.compile(ip_address, re.MULTILINE)
+        match = regex.search(rules.read())
+        rules.close()
+        # check if a rule to block this ip has already been written, this can happen due to forking
+        if not match:
+            rules = open("rules.sh", "a")
+            rules.write(rule)
             rules.close()
-            # check if a rule to block this ip has already been written, this can happen due to forking
-            if not match:
-                rules = open("rules.sh", "a")
-                rules.write(rule)
-                rules.close()
-                subprocess.call(["chmod", "755", "rules.sh"])
-                subprocess.call("./rules.sh")
-                print("IP address " + ip_address + " blocked, no user agent string")
+            subprocess.call(["chmod", "755", "rules.sh"])
+            subprocess.call("./rules.sh")
+            print("IP address " + ip_address + " blocked, no user agent string")
+
+    def check_user_agent_string(self, user_agent, score):
+        """ This method check if the current connection has provided a user agent string if it has not 100
+         point are deducted from the current connections score
+        :param user_agent: The user agent string of the current connecection
+        :param score: The score of the current connection
+        :return: updated score
+        """
+        if user_agent == "":
+            score -= 100
+        return score
+
+    def get_current_connection_score(self, ip_address, thread_lock):
+        """
+        This Method get the score of the current connection.  If the connection does not already have n entry
+        in the connection cache then a entry is added.
+        :param ip_address: The ip_address of the current connection
+        :param thread_lock: instance of threading.lock
+        :return: the current connections score
+        """
+        global connection_cache
+        try:  # Try to find the current connection in the connection cache and return the score.
+            current_connection = (item for item in connection_cache if item['ip_address'] == ip_address).next()
+            return current_connection['score']
+        except StopIteration:  # If the IP address is not found in the connection cache add entry with score of 0.
+            thread_lock.acquire()
+            connection_cache.append({'ip_address': ip_address, 'score': 0})
+            thread_lock.release()
+            return 0
+
+    def update_current_connection_score(self, ip_address, score, thread_lock):
+        """
+        Thus method updates the current connections score with an new score.  It also 
+        :param ip_address: IP address of the current connection
+        :param score:  The new score to update the original score with
+        :param thread_lock: instance of threading.lock
+        :return: none
+        """
+        global connection_cache
+        global red_score
+        global orange_score
+        global system_status
+
+        try:  #  try to find the current connection in the coonection  cache
+            current_connection = (item for item in connection_cache if item['ip_address'] == ip_address).next()
+            thread_lock.acquire()
+            current_connection['score'] = score
+            thread_lock.release()
+            if system_status == 'orange':
+                if score <= orange_score:
+                    self.block_ip_address(current_connection['ip_address'])
+            elif system_status == 'red':
+                if score <= red_score:
+                    self.block_ip_address(current_connection['ip_address'])
+        except StopIteration:
+            print("Something went wrong unable to find ip address %s" % ip_address)
+            print(connection_cache)
+
+    def process_connection(self, ip_address, user_agent):
+        thread_lock = threading.Lock()
+        score = self.get_current_connection_score(ip_address, thread_lock)
+        score = self.check_user_agent_string(user_agent, score)
+        self.update_current_connection_score(ip_address, score, thread_lock)
 
 
 def start_ddos_wall():
     """This method starts DDoS wall running"""
     if SETUP or RESET:
         write_firewall_script()
-    httpd = SocketServer.ForkingTCPServer(('', PORT), Proxy)
+    httpd = SocketServer.ThreadingTCPServer(('', PORT), Proxy)
     print('Proxy is running on port ', PORT)
     monitor = Monitoring()
     monitor.start()
