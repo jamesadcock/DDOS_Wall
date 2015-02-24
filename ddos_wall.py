@@ -211,10 +211,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         else:
             print(user_agent)
         global connection_cache
-        print("connection_cache before processing: ", connection_cache)
         self.process_connection(ip_address, user_agent)
-        print("connection_cache after processing: ", connection_cache)
-
 
     def block_ip_address(self, ip_address):
         """
@@ -241,11 +238,12 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         """ This method check if the current connection has provided a user agent string if it has not 100
          point are deducted from the current connections score
         :param user_agent: The user agent string of the current connection
-        :param score: The score of the current connection
         :return: updated score
         """
-        if user_agent == "":
+        if user_agent == "" and current_connection['user_agent_penalty'] is False:
             self.update_score(current_connection, -100, thread_lock)
+            self.update_connection_cache(current_connection, 'user_agent_penalty', thread_lock)
+            print('No user agent string 100 deducted from connection score')
 
     def update_score(self, current_connection, number, thread_lock):
         """
@@ -257,6 +255,19 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         """
         thread_lock.acquire()
         current_connection['score'] += number
+        thread_lock.release()
+
+    def update_connection_cache(self, current_connection, key, thread_lock, value=True):
+        """
+        This method updates connection cache
+        :param current_connection: the connection cache dict for the current connection
+        :param key: string, the key for the dictionary
+        :param thread_lock: instance of thread.lock
+        :param value: new value
+        :return: None
+        """
+        thread_lock.acquire()
+        current_connection[key] = value
         thread_lock.release()
 
     def calculate_request_interval_average(self, current_connection):
@@ -290,18 +301,32 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         request_threshold = 1.0 / float(requests_per_second)
         return request_threshold
 
-    def check_time_based_connection_threshold(self, current_connection, thread_lock):
+    def time_since_first_request(self, current_connection):
+        """
+        Calculates the amount of time between the current request and the first request made by
+        the client
+        :param current_connection: the connection cache dict for the current connection
+        :return: float, time elapsed since first request
+        """
+        connection_times = current_connection['connection_times']
+        time_elapsed = connection_times[len(connection_times)-1] - connection_times[0]
+        return time_elapsed
+
+
+    def check_request_velocity(self, current_connection, thread_lock):
         """
         This method checks if the frequency of request from the current connection
         is above the threshold and if so deducts 100 from the connection score
         :param current_connection: the connection cache dict for the current connection
         :return: none
         """
+        min_time = 60.0
         threshold = self.calculate_request_threshold(10)
         interval_average = self.calculate_request_interval_average(current_connection)
-        if interval_average is not None:
-            if interval_average < threshold:
+        if interval_average is not None and self.time_since_first_request(current_connection) > min_time:
+            if interval_average < threshold and current_connection['request_velocity_penalty'] is False:
                 self.update_score(current_connection, -100, thread_lock)
+                print('request velocity over threshold 100 deducted from connection score')
 
     def get_current_connection(self, ip_address):
         """
@@ -318,10 +343,18 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             return None
 
     def add_connection_cache_entry(self, ip_address, thread_lock):
+        """
+        This method creates a new entry in the connection cache
+        :param ip_address: string, ip address of connecting host
+        :param thread_lock: instance of thread.lock
+        :return: None
+        """
         thread_lock.acquire()
         connection_cache.append({'ip_address': ip_address,
                                  'score': 0,
-                                 'connection_times': []})
+                                 'connection_times': [],
+                                 'user_agent_penalty': False,
+                                 'request_velocity_penalty': False})
         thread_lock.release()
 
     def test_connection_score(self, current_connection):
@@ -358,7 +391,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             self.add_connection_cache_entry(ip_address, thread_lock)
             current_connection = self.get_current_connection(ip_address)
         self.check_user_agent_string(user_agent, current_connection, thread_lock)
-        self.check_time_based_connection_threshold(current_connection, thread_lock)
+        self.check_request_velocity(current_connection, thread_lock)
         self.test_connection_score(current_connection)
 
 def start_ddos_wall():
