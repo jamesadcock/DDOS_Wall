@@ -24,6 +24,7 @@ if __name__ == '__main__':
     parser.add_option('-n', '--network', default=0, help='threshold for Network usage')
     parser.add_option('-p', '--port', default=1234, help='port that proxy listens on')
     parser.add_option('-a', '--ip_address', help='MANDATORY - ip address of server')
+    parser.add_option('-I', '--interface', default='eth0', help='the interface forwarding traffic')
     parser.add_option('-t', '--time', default=10, help='the number of minutes that threshold is calculated over')
     parser.add_option('-i', '--interval', default=10, help='the interval between polling th server')
     parser.add_option('-s', '--setup', action='store_true', default=False,
@@ -39,6 +40,7 @@ if __name__ == '__main__':
 
     PORT = opts.port  # port that proxy listens on
     SERVER_IP = opts.ip_address  # IP address of server
+    INTERFACE = opts.interface  # the network interface
     CPU_ORANGE_THRESHOLD = opts.cpu_orange
     CPU_RED_THRESHOLD = opts.cpu_red
     RAM_THRESHOLD = opts.memory
@@ -50,8 +52,8 @@ if __name__ == '__main__':
     system_status = 'green'  # The current state that the system is in
     syn_cookies = 0
     initial_score = 0
-    orange_score = -500
-    red_score = -200
+    orange_score = -200
+    red_score = -100
     connection_cache = list()
 
 
@@ -63,11 +65,12 @@ def write_firewall_script():
     """
     firewall_script = """#!/bin/bash\n
     iptables -F\n
-    iptables -t nat -A PREROUTING -p tcp -i eth0 -d %s --dport 80 -j DNAT --to %s:%s\n
-    iptables -t nat -A PREROUTING -p tcp -i eth0 -d %s --dport 443 -j DNAT --to %s:%s\n
-    iptables -A FORWARD -p tcp -i eth0 -d %s --dport %s -j ACCEPT\n
+    iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 80 -j DNAT --to %s:%s\n
+    iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 443 -j DNAT --to %s:%s\n
+    iptables -A FORWARD -p tcp -i %s -d %s --dport %s -j ACCEPT\n
     \n
-    #automatically generated rules\n """ % (SERVER_IP, SERVER_IP, PORT, SERVER_IP, SERVER_IP, PORT, SERVER_IP, PORT)
+    #automatically generated rules\n """ % (INTERFACE, SERVER_IP, SERVER_IP, PORT, INTERFACE,
+                                            SERVER_IP, SERVER_IP, PORT, INTERFACE, SERVER_IP, PORT)
 
     rules = file('rules.sh', 'w')
     rules.write(firewall_script)
@@ -177,7 +180,7 @@ class Monitoring(threading.Thread):
                 print("ALERT: System status updated to orange")
                 if syn_cookies == 0:
                     print("Turning on SYN Cookies")
-                    self.turn_on_syn_cookies()
+                    #  self.turn_on_syn_cookies()
                     syn_cookies = 1
             #  If system load exceeds red threshold change system status to red
             elif system_load > resource_red_threshold and system_status != 'red':
@@ -206,10 +209,6 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         except:
             user_agent = ""
         ip_address = self.client_address[0]  # get client iP address
-        if user_agent == "":
-            print("No user agent")
-        else:
-            print(user_agent)
         global connection_cache
         self.process_connection(ip_address, user_agent)
 
@@ -244,6 +243,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             self.update_score(current_connection, -100, thread_lock)
             self.update_connection_cache(current_connection, 'user_agent_penalty', thread_lock)
             print('No user agent string 100 deducted from connection score')
+            print('user_agent_penalty updated to: %s' % current_connection['user_agent_penalty'])
 
     def update_score(self, current_connection, number, thread_lock):
         """
@@ -272,15 +272,20 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
     def calculate_request_interval_average(self, current_connection):
         """
-        This method calculates the average interval between requests
-        :param current_connection: the connection cache dict for the current connection
+        This method calculates the average interval between requests.
+        The lower avg that is returned the quicker the requests are coming
+        the below example shows on average there is
+        1 request every 2 seconds being received by the server from the host
+        1.23, 1.24, 1.27, 1.30, 1.31
+        1, 3, 3 ,1 = 2
+        :param current_connection for the current connection
         :return: float, average interval between connections
         """
         global connection_cache
         connection_times = current_connection['connection_times']
         connection_times.append(time.time())
         previous_connection_time = 0
-        connection_intervals = list()
+        connection_intervals = list()  # list containing the interval between consecutive connections
         not_first_iteration = False
         for con in connection_times:
             if not_first_iteration:
@@ -317,21 +322,27 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         """
         This method checks if the frequency of request from the current connection
         is above the threshold and if so deducts 100 from the connection score
+        If the threshold is set at 0.1 this means 10 requests per second will be
+        tolerated before marking connection as suspicious.
+        We don't start calculating until 1 minutes has passed since initial request from the client
         :param current_connection: the connection cache dict for the current connection
         :return: none
         """
         min_time = 60.0
-        threshold = self.calculate_request_threshold(10)
+        max_connections_per_second = 10
+        threshold = self.calculate_request_threshold(max_connections_per_second)
         interval_average = self.calculate_request_interval_average(current_connection)
         if interval_average is not None and self.time_since_first_request(current_connection) > min_time:
             if interval_average < threshold and current_connection['request_velocity_penalty'] is False:
                 self.update_score(current_connection, -100, thread_lock)
                 print('request velocity over threshold 100 deducted from connection score')
+                self.update_connection_cache(current_connection, 'request_velocity_penalty', thread_lock)
+                print('Request_velocity_penalty updated to: %s' % current_connection['request_velocity_penalty'])
 
     def get_current_connection(self, ip_address):
         """
         This Method gets the current connection from the connection cache.  If the connection does not already have an
-        entry it return None
+        entry it returns None
         :param ip_address: The ip_address of the current connection
         :return: dict for current connection
         """
