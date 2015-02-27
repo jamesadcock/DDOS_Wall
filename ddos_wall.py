@@ -210,6 +210,13 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         self.process_connection(ip_address, headers)
 
     def generate_header_dic(self, header_strings):
+        """
+        This method creates a dictionary from the a list containing headers.  The returned dictionary
+        contains the each header with the key as the the header name for example
+        [Cookie: 'some_cookie_name=some_cookie_value]
+        :param header_strings: list, containing headers
+        :return: dict, containing headers
+        """
         headers = dict()
 
         for header_values in header_strings:
@@ -279,11 +286,25 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         thread_lock.release()
 
     def check_for_ddos_token(self, headers, current_connection, thread_lock):
+        """
+        This method checks if the request from the current connection includes a ddos token in the cookies,
+        if it does then ddos_token_received is updated to true. If however no ddos token is included and it
+        is not the first request then 100 is deducted from the score.  If a DDoS token is included in a latter
+        request a 100 points are added to the score.
+        :param headers: dict, the http headers from the current request
+        :param current_connection: list containing current connection data
+        :param thread_lock: instance of thread.lock
+        :return: None
+        """
         ddos_token = '2f77668a9dfbf8d5848b9eeb4a7145ca94c6ed9236e4a773f6dcafa5132b2f91'
         try:
             cookies = headers['Cookie']
             if cookies.find(ddos_token) > 0 and current_connection['ddos_token_received'] is False:
                 print('DDoS token received')
+                if current_connection['ddos_token_penalty'] is True:
+                    self.update_score(current_connection, 100, thread_lock)
+                    current_connection['ddos_token_penalty'] = False
+
                 current_connection['ddos_token_received'] = True
                 print("ddos_token_received changed to %s" % current_connection['ddos_token_received'])
 
