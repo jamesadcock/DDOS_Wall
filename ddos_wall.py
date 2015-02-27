@@ -204,13 +204,18 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         uri = "http://" + SERVER_IP + self.path
         response = urllib.urlopen(uri)
         self.copyfile(response, self.wfile)
-        try:
-            user_agent = self.headers.headers[1]  # get user agent string
-        except:
-            user_agent = ""
+        headers = self.generate_header_dic(self.headers.headers)
         ip_address = self.client_address[0]  # get client iP address
         global connection_cache
-        self.process_connection(ip_address, user_agent)
+        self.process_connection(ip_address, headers)
+
+    def generate_header_dic(self, header_strings):
+        headers = dict()
+
+        for header_values in header_strings:
+            header_list = header_values.split(':')
+            headers[header_list[0]] = header_list[1]
+        return headers
 
     def block_ip_address(self, ip_address):
         """
@@ -233,17 +238,20 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             subprocess.call("./rules.sh")
             print("IP address " + ip_address + " blocked")
 
-    def check_user_agent_string(self, user_agent, current_connection, thread_lock):
+    def check_user_agent_string(self, headers, current_connection, thread_lock):
         """ This method check if the current connection has provided a user agent string if it has not 100
          point are deducted from the current connections score
         :param user_agent: The user agent string of the current connection
         :return: updated score
         """
-        if user_agent == "" and current_connection['user_agent_penalty'] is False:
-            self.update_score(current_connection, -100, thread_lock)
-            self.update_connection_cache(current_connection, 'user_agent_penalty', thread_lock)
-            print('No user agent string 100 deducted from connection score')
-            print('user_agent_penalty updated to: %s' % current_connection['user_agent_penalty'])
+        try:
+            user_agent = headers['User-Agent']
+        except KeyError:
+            if current_connection['user_agent_penalty'] is False:
+                self.update_score(current_connection, -100, thread_lock)
+                self.update_connection_cache(current_connection, 'user_agent_penalty', thread_lock)
+                print('No user agent string 100 deducted from connection score')
+                print('user_agent_penalty updated to: %s' % current_connection['user_agent_penalty'])
 
     def update_score(self, current_connection, number, thread_lock):
         """
@@ -269,6 +277,31 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         thread_lock.acquire()
         current_connection[key] = value
         thread_lock.release()
+
+    def check_for_ddos_token(self, headers, current_connection, thread_lock):
+        ddos_token = '2f77668a9dfbf8d5848b9eeb4a7145ca94c6ed9236e4a773f6dcafa5132b2f91'
+        try:
+            cookies = headers['Cookie']
+            if cookies.find(ddos_token) > 0 and current_connection['ddos_token_received'] is False:
+                print('DDoS token received')
+                current_connection['ddos_token_received'] = True
+                print("ddos_token_received changed to %s" % current_connection['ddos_token_received'])
+
+            elif current_connection['ddos_token_penalty'] is False and \
+                    current_connection['ddos_token_received'] is False:
+                print('DDoS token not found')
+                self.update_score(current_connection, -100, thread_lock)
+                print('No DDoS token received')
+                self.update_connection_cache(current_connection, 'ddos_token_penalty', thread_lock)
+                print('ddoS_token_penalty updated to: %s' % current_connection['ddos_token_penalty'])
+        except KeyError:
+            if len(current_connection['connection_times']) > 1 and current_connection['ddos_token_penalty'] is False:
+                print('DDoS token not found')
+                self.update_score(current_connection, -100, thread_lock)
+                print('No DDoS token received')
+                self.update_connection_cache(current_connection, 'ddos_token_penalty', thread_lock)
+                print('ddoS_token_penalty updated to: %s' % current_connection['ddos_token_penalty'])
+
 
     def calculate_request_interval_average(self, current_connection):
         """
@@ -365,7 +398,9 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
                                  'score': 0,
                                  'connection_times': [],
                                  'user_agent_penalty': False,
-                                 'request_velocity_penalty': False})
+                                 'request_velocity_penalty': False,
+                                 'ddos_token_penalty': False,
+                                 'ddos_token_received': False})
         thread_lock.release()
 
     def test_connection_score(self, current_connection):
@@ -386,7 +421,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
                 self.block_ip_address(current_connection['ip_address'])
 
 
-    def process_connection(self, ip_address, user_agent):
+    def process_connection(self, ip_address, headers):
         """
         This method check if current connection has an entry in the connection cache and
         if not creates one.  It then runs the anomaly detection algorithms which updates
@@ -401,8 +436,9 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         if current_connection is None:
             self.add_connection_cache_entry(ip_address, thread_lock)
             current_connection = self.get_current_connection(ip_address)
-        self.check_user_agent_string(user_agent, current_connection, thread_lock)
+        self.check_user_agent_string(headers, current_connection, thread_lock)
         self.check_request_velocity(current_connection, thread_lock)
+        self.check_for_ddos_token(headers, current_connection, thread_lock)
         self.test_connection_score(current_connection)
 
 def start_ddos_wall():
