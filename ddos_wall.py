@@ -9,6 +9,8 @@ import time
 import optparse
 from ddosw_baseline import get_mean
 import threading
+import sysmon
+import sys
 
 
 if __name__ == '__main__':
@@ -20,8 +22,10 @@ if __name__ == '__main__':
     parser = optparse.OptionParser(description=description)
     parser.add_option('-c', '--cpu_orange', default=0, help='orange threshold for CPU utilisation')
     parser.add_option('-C', '--cpu_red', default=0, help='red threshold for CPU utilisation')
-    parser.add_option('-m', '--memory', default=0, help='threshold for RAM usage')
-    parser.add_option('-n', '--network', default=0, help='threshold for Network usage')
+    parser.add_option('-m', '--memory_orange', default=0, help='orange threshold for RAM usage')
+    parser.add_option('-M', '--memory_red', default=0, help='red threshold for RAM usage')
+    parser.add_option('-n', '--network_orange', default=0, help='orange threshold for Network usage')
+    parser.add_option('-N', '--network_red', default=0, help='red threshold for Network usage')
     parser.add_option('-p', '--port', default=1234, help='port that proxy listens on')
     parser.add_option('-a', '--ip_address', help='MANDATORY - ip address of server')
     parser.add_option('-I', '--interface', default='eth0', help='the interface forwarding traffic')
@@ -43,8 +47,10 @@ if __name__ == '__main__':
     INTERFACE = opts.interface  # the network interface
     CPU_ORANGE_THRESHOLD = opts.cpu_orange
     CPU_RED_THRESHOLD = opts.cpu_red
-    RAM_THRESHOLD = opts.memory
-    NETWORK_THRESHOLD = opts.network
+    RAM_ORANGE_THRESHOLD = opts.memory_orange
+    RAM_RED_THRESHOLD = opts.memory_red
+    NETWORK_ORANGE_THRESHOLD = opts.network_orange
+    NETWORK_RED_THRESHOLD = opts.network_red
     TIME_PERIOD = opts.time  # how long in minutes the running average for the monitoring should be
     INTERVAL = opts.interval  # length of tim in seconds between polling resource
     SETUP = opts.setup  # If setup needs running
@@ -81,6 +87,39 @@ def write_firewall_script():
 
 class Monitoring(threading.Thread):
     """This class contains methods for monitoring the system and turning on SYN Cookies """
+    def calculate_thresholds(self):
+        """
+        This method calculates default threshold values which are used if non are specified when DDoS_Wall
+        is started.  The default values use the MAX CPU data.  The orange threshold is set at 50% higher than
+        the CPU max value in the server_stats.txt and the red threshold is set a 75% higher
+        :return: dict, containing thresholds
+        """
+        try:
+            f = open('server_stats.txt', 'r')
+        except IOError:
+            print("server_stats.txt does not exist please run ddosw_baseline")
+            sys.exit()
+
+        #  extract the value rom server_stats.txt
+        stats = f.readlines()
+        raw_stats = list()
+        for line in stats:
+            stats = line.split()
+            raw_stats.append(stats[2])
+
+        thresholds = dict()
+
+        #  set the orange threshold at 50% higher than the previously recorded maximum cpu value
+        #  set the red threshold at 75% higher than the previously recorded maximum cpu value
+        if float(raw_stats[1]) < 57:
+            thresholds['orange_cpu_threshold'] = float(raw_stats[1]) * 1.5
+            thresholds['red_cpu_threshold'] = float(raw_stats[1]) * 1.75
+        else:  # ensure the threshold cannot go above 100%
+            thresholds['orange_cpu_threshold'] = 85
+            thresholds['red_cpu_threshold'] = 95
+
+        return thresholds
+
     def get_system_load(self, interval, time_period, resource):
         """
         This method continuously polls the server and calculates the average CPU, RAM and
@@ -100,12 +139,14 @@ class Monitoring(threading.Thread):
         i = 0
         # get the average for minimum for time period, before dropping the oldest values
         while i < num_of_polls:
-            subprocess.call(["bash", "%s_stats.sh" % resource])
+            if resource == 'cpu':
+                stats.append(sysmon.get_cpu_utilisation())
+            elif resource == 'memory':
+                stats.append(sysmon.get_memory_usage())
+            elif resource == 'network':
+                stats.append(sysmon.get_network_interface_traffic(INTERFACE))
             time.sleep(interval)
-            f = open("%s_stats.txt" % resource, 'r')
-            stats.append(str(f.read()).rstrip())
             i += 1
-        f.close()
         return stats
 
     def update_system_load(self, interval, stats, resource):
@@ -118,14 +159,17 @@ class Monitoring(threading.Thread):
         :return: updated list of values pertaining to resource being monitored
         """
         interval = int(interval)
-        subprocess.call(["bash", "%s_stats.sh" % resource])
-        time.sleep(interval)
-        f = open("%s_stats.txt" % resource, 'r')
+        if resource == 'cpu':
+            latest_reading = sysmon.get_cpu_utilisation()
+        elif resource == 'memory':
+            latest_reading = sysmon.get_memory_usage()
+        elif resource == 'network':
+            latest_reading = sysmon.get_network_interface_traffic(INTERFACE)
+
         del stats[0]
-        latest_reading = str(f.read()).rstrip()
         stats.append(latest_reading)
-        print("Latest %s reading is %s " % (resource, latest_reading))
-        f.close()
+        print("Latest %s reading is %0.2f" % (resource, latest_reading))
+        time.sleep(interval)
         return stats
 
     def turn_on_syn_cookies(self):
@@ -138,6 +182,8 @@ class Monitoring(threading.Thread):
         subprocess.call(['sysctl', '-p'])
         print("SYN cookies have been turn on")
 
+
+
     def run(self):
         """
         This method checks which resource should be monitored and starts polling the relevant
@@ -149,26 +195,33 @@ class Monitoring(threading.Thread):
         #  Check which resources should be monitored
         if CPU_ORANGE_THRESHOLD > 0:
             resource = "cpu"
-            print("CPU is being monitored, orange threshold set at %s, red threshold set to %s"
+            print("CPU is being monitored, orange threshold set at %0.2f, red threshold set to %0.2f"
                   % (CPU_ORANGE_THRESHOLD, CPU_RED_THRESHOLD))
             resource_orange_threshold = float(CPU_ORANGE_THRESHOLD)
             resource_red_threshold = float(CPU_RED_THRESHOLD)
-        elif NETWORK_THRESHOLD > 0:
+        elif NETWORK_ORANGE_THRESHOLD > 0:
             resource = "network"
-            print("Network usage is being monitored, threshold set at %s" % NETWORK_THRESHOLD)
-            resource_threshold = NETWORK_THRESHOLD
-        elif RAM_THRESHOLD > 0:
+            print("Network usage is being monitored, orange threshold set at %0.2f, red threshold set to %0.2f"
+                  % (NETWORK_ORANGE_THRESHOLD, NETWORK_RED_THRESHOLD))
+            resource_orange_threshold = float(NETWORK_ORANGE_THRESHOLD)
+            resource_red_threshold = float(NETWORK_RED_THRESHOLD)
+        elif RAM_ORANGE_THRESHOLD > 0:
             resource = "memory"
-            print("Memory is being monitored, threshold set at %s" % RAM_THRESHOLD)
-            resource_threshold = RAM_THRESHOLD
+            print("Memory is being monitored, orange threshold set at %0.2f , red threshold set to %0.2f"
+                  % (RAM_ORANGE_THRESHOLD, RAM_RED_THRESHOLD))
+            resource_orange_threshold = float(RAM_ORANGE_THRESHOLD)
+            resource_red_threshold = float(RAM_RED_THRESHOLD)
         else:
-            print('No threshold value supplied, system monitor will not be started')
-            return
+            resource = "cpu"
+            resource_orange_threshold = float(self.calculate_thresholds()['orange_cpu_threshold'])
+            resource_red_threshold = float(self.calculate_thresholds()['red_cpu_threshold'])
+            print("CPU is being monitored, orange threshold set at %0.2f, red threshold set to %0.2f"
+                  % (resource_orange_threshold, resource_red_threshold))
         stats = self.get_system_load(INTERVAL, TIME_PERIOD, resource)
         print("System monitor engaged")
         while True:
             system_load = float(get_mean(stats))
-            print "System load is %s" % system_load
+            print "System load is %0.2f" % system_load
             #  If system load below orange threshold change status to green
             if system_load < resource_orange_threshold and system_status != 'green':
                 system_status = 'green'
@@ -188,9 +241,8 @@ class Monitoring(threading.Thread):
                 print("WARNING: System status updated to Red")
             else:
                 print("No conditions met")
-                print("Status: %s, System_load: %s, Orange_threshold: %s, Red_threshold: %s " %
+                print("Status: %s, System_load: %0.2f, Orange_threshold: %0.2f, Red_threshold: %0.2f" %
                       (system_status, system_load, resource_orange_threshold, resource_red_threshold))
-
 
             stats = self.update_system_load(INTERVAL, stats, resource)
 
@@ -204,6 +256,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         uri = "http://" + SERVER_IP + self.path
         response = urllib.urlopen(uri)
         self.copyfile(response, self.wfile)
+        print self.headers
         headers = self.generate_header_dic(self.headers.headers)
         ip_address = self.client_address[0]  # get client iP address
         global connection_cache
@@ -244,6 +297,15 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             subprocess.call(["chmod", "755", "rules.sh"])
             subprocess.call("./rules.sh")
             print("IP address " + ip_address + " blocked")
+
+
+    def check_associated_resource_requests(self):
+        """
+        This method checks that the connecting client has also requested any resources that are referenced
+        by the page.  The may be css, javascript, images, etc.
+        :return:
+        """
+
 
     def check_user_agent_string(self, headers, current_connection, thread_lock):
         """ This method check if the current connection has provided a user agent string if it has not 100
