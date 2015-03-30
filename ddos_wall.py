@@ -28,7 +28,7 @@ if __name__ == '__main__':
     parser.add_option('-N', '--network_red', default=0, help='red threshold for Network usage')
     parser.add_option('-p', '--port', default=1234, help='port that proxy listens on')
     parser.add_option('-a', '--ip_address', help='MANDATORY - ip address of server')
-    parser.add_option('-I', '--interface', default='eth0', help='the interface forwarding traffic')
+    parser.add_option('-I', '--interface', default='wlan0', help='the interface forwarding traffic')
     parser.add_option('-t', '--time', default=10, help='the number of minutes that threshold is calculated over')
     parser.add_option('-i', '--interval', default=10, help='the interval between polling th server')
     parser.add_option('-s', '--setup', action='store_true', default=False,
@@ -45,12 +45,12 @@ if __name__ == '__main__':
     PORT = opts.port  # port that proxy listens on
     SERVER_IP = opts.ip_address  # IP address of server
     INTERFACE = opts.interface  # the network interface
-    CPU_ORANGE_THRESHOLD = opts.cpu_orange
-    CPU_RED_THRESHOLD = opts.cpu_red
-    RAM_ORANGE_THRESHOLD = opts.memory_orange
-    RAM_RED_THRESHOLD = opts.memory_red
-    NETWORK_ORANGE_THRESHOLD = opts.network_orange
-    NETWORK_RED_THRESHOLD = opts.network_red
+    CPU_ORANGE_THRESHOLD = float(opts.cpu_orange)
+    CPU_RED_THRESHOLD = float(opts.cpu_red)
+    RAM_ORANGE_THRESHOLD = float(opts.memory_orange)
+    RAM_RED_THRESHOLD = float(opts.memory_red)
+    NETWORK_ORANGE_THRESHOLD = float(opts.network_orange)
+    NETWORK_RED_THRESHOLD = float(opts.network_red)
     TIME_PERIOD = opts.time  # how long in minutes the running average for the monitoring should be
     INTERVAL = opts.interval  # length of tim in seconds between polling resource
     SETUP = opts.setup  # If setup needs running
@@ -75,8 +75,9 @@ def write_firewall_script():
     iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 443 -j DNAT --to %s:%s\n
     iptables -A FORWARD -p tcp -i %s -d %s --dport %s -j ACCEPT\n
     \n
-    #automatically generated rules\n """ % (INTERFACE, SERVER_IP, SERVER_IP, PORT, INTERFACE,
-                                            SERVER_IP, SERVER_IP, PORT, INTERFACE, SERVER_IP, PORT)
+    #automatically generated rules\n """ % (INTERFACE, SERVER_IP, SERVER_IP, PORT,
+                                            INTERFACE, SERVER_IP, SERVER_IP, PORT,
+                                            INTERFACE, SERVER_IP, PORT)
 
     rules = file('rules.sh', 'w')
     rules.write(firewall_script)
@@ -102,6 +103,7 @@ class Monitoring(threading.Thread):
 
         #  extract the value rom server_stats.txt
         stats = f.readlines()
+        f.close()
         raw_stats = list()
         for line in stats:
             stats = line.split()
@@ -220,7 +222,7 @@ class Monitoring(threading.Thread):
         stats = self.get_system_load(INTERVAL, TIME_PERIOD, resource)
         print("System monitor engaged")
         while True:
-            system_load = float(get_mean(stats))
+            system_load = 100 * float(get_mean(stats))
             print "System load is %0.2f" % system_load
             #  If system load below orange threshold change status to green
             if system_load < resource_orange_threshold and system_status != 'green':
@@ -256,11 +258,12 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         uri = "http://" + SERVER_IP + self.path
         response = urllib.urlopen(uri)
         self.copyfile(response, self.wfile)
-        print self.headers
         headers = self.generate_header_dic(self.headers.headers)
         ip_address = self.client_address[0]  # get client iP address
         global connection_cache
-        self.process_connection(ip_address, headers)
+        self.process_request(ip_address, headers)
+        self.process_response(ip_address, response.headers)
+
 
     def generate_header_dic(self, header_strings):
         """
@@ -298,7 +301,6 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             subprocess.call("./rules.sh")
             print("IP address " + ip_address + " blocked")
 
-
     def check_associated_resource_requests(self):
         """
         This method checks that the connecting client has also requested any resources that are referenced
@@ -306,6 +308,66 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :return:
         """
 
+    def get_download_data(self, response_headers):
+        """
+        gets the response body size in bytes and the time the request was sent and stores them in a dictionary
+        :param response_headers: response object
+        :return: dictionary
+        """
+        data = dict()
+        data['time'] = time.time()
+        data['data'] = response_headers['Content-Length']
+        return data
+
+    def calculate_download_rate(self, current_connection, response_headers, time_period=60):
+        """
+
+        :param current_connection:
+        :param response_headers:
+        :param time_period:
+        :return: float, data per second
+        """
+        self.update_download_data(current_connection, response_headers)
+        download_data = current_connection['download_data']
+        total_data = 0.0
+        latest_response_time = int(download_data[len(download_data)-1]['time'])  # time of latest response
+        first_response_time = int(download_data[0]['time'])  # time of first response
+        time_since_first_response = latest_response_time - first_response_time
+        if time_since_first_response > time_period:
+            for data in download_data:
+                seconds_since_request = int(latest_response_time) - int(data['time'])
+                if seconds_since_request <= time_period:  # was the response in the last x seconds 2539 <= 60
+                    total_data += float(data['data'])  # calculate data requested in the last x second
+            data_per_second = total_data / float(time_period)
+            return data_per_second
+
+    def check_download_rate(self, thread_lock, current_connection, response_headers, threshold=20000):
+        """
+        This method checks if the download rate has exceeded the maximum threshold
+        :param thread_lock: object, instance of thread_lock
+        :param current_connection: list, the current connection list
+        :param response_headers: response object
+        :param threshold: int, threshold at which download rate penalty is applied
+        :return: none
+        """
+        data_per_second = self.calculate_download_rate(current_connection, response_headers)
+        if not current_connection['download_rate_penalty']:
+            if data_per_second > threshold:
+                self.update_score(current_connection, -100, thread_lock)
+                self.update_connection_cache(current_connection, 'download_rate_penalty', thread_lock, True)
+                print('Exceeded download rate 100 deducted from connection score')
+                print('download_rate_penalty updated to: %s' % current_connection['download_rate_penalty'])
+                current_connection['download_rate_penalty'] = True
+
+    def update_download_data(self, current_connection, headers):
+        """
+        This method adds the response size and time to the connection_cache
+        :param current_connection: list, current connection data
+        :param headers:object, response headers
+        :return: None
+        """
+        download_data = current_connection['download_data']
+        download_data.append(self.get_download_data(headers))
 
     def check_user_agent_string(self, headers, current_connection, thread_lock):
         """ This method check if the current connection has provided a user agent string if it has not 100
@@ -314,11 +376,11 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :return: updated score
         """
         try:
-            user_agent = headers['User-Agent']
+            headers['User-Agent']
         except KeyError:
             if current_connection['user_agent_penalty'] is False:
                 self.update_score(current_connection, -100, thread_lock)
-                self.update_connection_cache(current_connection, 'user_agent_penalty', thread_lock)
+                self.update_connection_cache(current_connection, 'user_agent_penalty', thread_lock, True)
                 print('No user agent string 100 deducted from connection score')
                 print('user_agent_penalty updated to: %s' % current_connection['user_agent_penalty'])
 
@@ -358,7 +420,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :param thread_lock: instance of thread.lock
         :return: None
         """
-        ddos_token = '2f77668a9dfbf8d5848b9eeb4a7145ca94c6ed9236e4a773f6dcafa5132b2f91'
+        ddos_token = '5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5'
         try:
             cookies = headers['Cookie']
             if cookies.find(ddos_token) > 0 and current_connection['ddos_token_received'] is False:
@@ -480,10 +542,12 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         connection_cache.append({'ip_address': ip_address,
                                  'score': 0,
                                  'connection_times': [],
+                                 'download_data': [],
                                  'user_agent_penalty': False,
                                  'request_velocity_penalty': False,
                                  'ddos_token_penalty': False,
-                                 'ddos_token_received': False})
+                                 'ddos_token_received': False,
+                                 'download_rate_penalty': False})
         thread_lock.release()
 
     def test_connection_score(self, current_connection):
@@ -504,7 +568,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
                 self.block_ip_address(current_connection['ip_address'])
 
 
-    def process_connection(self, ip_address, headers):
+    def process_request(self, ip_address, headers):
         """
         This method check if current connection has an entry in the connection cache and
         if not creates one.  It then runs the anomaly detection algorithms which updates
@@ -522,6 +586,12 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         self.check_user_agent_string(headers, current_connection, thread_lock)
         self.check_request_velocity(current_connection, thread_lock)
         self.check_for_ddos_token(headers, current_connection, thread_lock)
+        self.test_connection_score(current_connection)
+
+    def process_response(self, ip_address, headers):
+        thread_lock = threading.Lock()
+        current_connection = self.get_current_connection(ip_address)
+        self.check_download_rate(thread_lock, current_connection, headers)
         self.test_connection_score(current_connection)
 
 def start_ddos_wall():
