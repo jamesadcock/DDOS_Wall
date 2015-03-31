@@ -341,7 +341,18 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             data_per_second = total_data / float(time_period)
             return data_per_second
 
-    def check_download_rate(self, thread_lock, current_connection, response_headers, threshold=20000):
+    def get_dowload_rate_threshold(self):
+        """
+        This method gets the highest recorded download rate from max_download.txt, adds 10% and returns
+        the values
+        :return: float, max download rate
+        """
+        f = open('max_download.txt', 'r')
+        max_download_rate = float(f.readline())
+        max_download_rate *= 1.1
+        return max_download_rate
+
+    def check_download_rate(self, thread_lock, current_connection, response_headers):
         """
         This method checks if the download rate has exceeded the maximum threshold
         :param thread_lock: object, instance of thread_lock
@@ -350,6 +361,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :param threshold: int, threshold at which download rate penalty is applied
         :return: none
         """
+        threshold = self.get_dowload_rate_threshold()
         data_per_second = self.calculate_download_rate(current_connection, response_headers)
         if not current_connection['download_rate_penalty']:
             if data_per_second > threshold:

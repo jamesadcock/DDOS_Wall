@@ -29,8 +29,10 @@ def get_cpu_utilisation(sleep_time=1):
     # get first reading
     cpu_stats = f.readline().split()  # get cpu stats
     idle_reading_1 = float(cpu_stats[4])
-    total_reading_1 = float(cpu_stats[1]) + float(cpu_stats[2]) + float(cpu_stats[3]) \
-                      + float(cpu_stats[4]) + float(cpu_stats[5])
+    total_reading_1 = float(cpu_stats[1]) + float(cpu_stats[2]) + float(cpu_stats[3])\
+                      + float(cpu_stats[4]) + float(cpu_stats[5]) + float(cpu_stats[6])\
+                      + float(cpu_stats[7]) + float(cpu_stats[8]) + float(cpu_stats[9])\
+                      + float(cpu_stats[10])
 
     # wait for specified period of time
     time.sleep(sleep_time)
@@ -38,10 +40,12 @@ def get_cpu_utilisation(sleep_time=1):
 
     # get second reading
     cpu_stats = f.readline().split()  # get cpu stats
+    f.close()
     idle_reading_2 = float(cpu_stats[4])
     total_reading_2 = float(cpu_stats[1]) + float(cpu_stats[2]) + float(cpu_stats[3])\
-                      + float(cpu_stats[4]) + float(cpu_stats[5])
-    f.close()
+                      + float(cpu_stats[4]) + float(cpu_stats[5]) + float(cpu_stats[6])\
+                      + float(cpu_stats[7]) + float(cpu_stats[8]) + float(cpu_stats[9])\
+                      + float(cpu_stats[10])
 
     # calculate the amount of time that the CPU has spent idle between the first and second reading convert it
     # into a decimal
@@ -51,7 +55,7 @@ def get_cpu_utilisation(sleep_time=1):
 
 def get_network_interface_traffic(interface, sleep_time=1):
     """
-    This method calculates and returns the number of bytes passing through an interface in the specified number
+    This method calculates and returns the number of bytes relieved by an interface in the specified number
     of seconds.  It does this by reading the total number of bytes that has passed through the network
     adaptor since start up from the /proc/net/dev file.  It then waits for the specified number of seconds,
     takes another reading and performs the following calculation:
@@ -67,7 +71,7 @@ def get_network_interface_traffic(interface, sleep_time=1):
     for line in network_stats:
         if re.search(interface, line):
             network_stats = line.split()
-    interface_reading_1 = int(network_stats[9])
+    interface_reading_1 = int(network_stats[1])  # get total bytes received by network interface
 
     # wait for specified period of time
     time.sleep(sleep_time)
@@ -75,12 +79,12 @@ def get_network_interface_traffic(interface, sleep_time=1):
 
     # get second reading
     network_stats = f.readlines()
+    f.close()
     for line in network_stats:
         if re.search(interface, line):
             network_stats = line.split()
-    interface_reading_2 = int(network_stats[9])
+    interface_reading_2 = int(network_stats[1])  # get total bytes received by network interface
 
-    f.close()
 
     # calculate the amount of data in bytes that has passed through the
     # network card between the first and second reading
@@ -98,6 +102,7 @@ def get_memory_usage():
     f = open('/proc/meminfo', 'r')  # this file contains data regarding memory usage
 
     memory_stats = f.readlines()
+    f.close()
     for line in memory_stats:
         if re.search('MemTotal:', line):  # find total RAM
             total_memory = line.split()

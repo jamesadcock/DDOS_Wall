@@ -2,68 +2,13 @@ import re
 import time
 import datetime
 from datetime import timedelta
+import apache_log_parser
 
 client_data = list()
 
 
-class Timezone(datetime.tzinfo):
-
-    def __init__(self, name="+0000"):
-        self.name = name
-        seconds = int(name[:-2])*3600+int(name[-2:])*60
-        self.offset = datetime.timedelta(seconds=seconds)
-
-    def utcoffset(self, dt):
-        return self.offset
-
-    def dst(self, dt):
-        return timedelta(0)
-
-    def tzname(self, dt):
-        return self.name
-
-
-def parse_access_logs(location='/var/log/apache2/access.log'):
-    f = open(location, 'r')
-    access_log = f.readlines()
-    elements = [
-        r'(?P<host>\S+)',                   # host
-        r'\S+',                             # unused
-        r'(?P<user>\S+)',                   # user
-        r'\[(?P<time>.+)\]',                # time
-        r'"(?P<request>.+)"',               # request
-        r'(?P<status>[0-9]+)',              # status
-        r'(?P<size>\S+)',                   # size %b
-        r'"(?P<referer>.*)"',               # referer
-        r'"(?P<agent>.*)"',                 # user agent
-    ]
-    pattern = re.compile(r'\s+'.join(elements)+r'\s*\Z')
-    logs = list()
-
-    for line in access_log:
-        m = pattern.match(line)
-        try:
-            log_data = m.groupdict()
-            if log_data["user"] == "-":
-                log_data["user"] = None
-                log_data["status"] = int(log_data["status"])
-            if log_data["size"] == "-":
-                log_data["size"] = 0
-            else:
-                log_data["size"] = int(log_data["size"])
-            if log_data["referer"] == "-":
-                log_data["referer"] = None
-
-            t = time.strptime(log_data["time"][:-6], "%d/%b/%Y:%H:%M:%S")
-            t = list(t[:6]) + [0, Timezone(log_data["time"][-5:])]
-            log_data["time"] = datetime.datetime(*t)
-            logs.append(log_data)
-        except AttributeError:
-            pass
-    return logs
-
-
 def add_client_data(ip_address):
+        global client_data
         client_data.append({'ip_address': ip_address,
                             'download_data': [],
                             })
@@ -89,7 +34,7 @@ def update_client_data():
     This method updates the client_data with the time and size of the response
     :return: None
     """
-    logs = parse_access_logs()
+    logs = apache_log_parser.parse_access_logs()
     for log in logs:
         current_client = get_current_client_data(log['host'])
         if current_client is None:
@@ -99,6 +44,7 @@ def update_client_data():
 
 
 def get_maximum_download():
+    global client_data
     update_client_data()
     try:
         start_time = int(client_data[0]['download_data'][0]['time'])
@@ -119,7 +65,19 @@ def get_maximum_download():
                 if avg > maximum:
                     maximum = avg
             i += 1
+
     return maximum
 
+
+def write_max_download_to_file():
+    """
+    This method gets the maximum download value and writes it to a file max_download.txt
+    :return:
+    """
+    f = open('max_download.txt', 'w')
+    f.write(str(get_maximum_download()))
+    f.close()
+
+
 if __name__ == '__main__':
-    get_maximum_download()
+    write_max_download_to_file()
