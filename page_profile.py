@@ -162,5 +162,5 @@ def is_non_site_link(link, base_url):
         return False
 
 if __name__ == '__main__':
-    base_url = raw_input("Please enter base URL, e.g. http://example.com: ")
-    print(create_page_profile(base_url))
+    uri = raw_input("Please enter base URL, e.g. http://example.com: ")
+    print(create_page_profile(uri))

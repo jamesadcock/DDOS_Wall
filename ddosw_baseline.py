@@ -134,7 +134,7 @@ if __name__ == '__main__':
     if GENERATE_REPORT:
         print("Generating report this will take %s minutes" % RUNNING_TIME)
         create_baseline(int(RUNNING_TIME), int(INTERVAL), int(ROLLING_AVERAGE_PERIOD))
-        log_scraper.write_max_download_to_file()
+        log_scraper.write_to_file()
 
     else:
         print_results()

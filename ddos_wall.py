@@ -11,6 +11,7 @@ from ddosw_baseline import get_mean
 import threading
 import sysmon
 import sys
+import page_profile
 
 
 if __name__ == '__main__':
@@ -61,7 +62,8 @@ if __name__ == '__main__':
     orange_score = -200
     red_score = -100
     connection_cache = list()
-
+    base_url = 'http://%s' % SERVER_IP
+    profile = page_profile.create_page_profile(base_url)
 
 
 def write_firewall_script():
@@ -259,10 +261,11 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         response = urllib.urlopen(uri)
         self.copyfile(response, self.wfile)
         headers = self.generate_header_dic(self.headers.headers)
+        print(self.path)
         ip_address = self.client_address[0]  # get client iP address
-        global connection_cache
         self.process_request(ip_address, headers)
         self.process_response(ip_address, response.headers)
+        #  print(response.url)
 
 
     def generate_header_dic(self, header_strings):
@@ -301,12 +304,13 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             subprocess.call("./rules.sh")
             print("IP address " + ip_address + " blocked")
 
-    def check_associated_resource_requests(self):
+    def check_associated_resource_requests(self, ):
         """
         This method checks that the connecting client has also requested any resources that are referenced
         by the page.  The may be css, javascript, images, etc.
         :return:
         """
+        global profile
 
     def get_download_data(self, response_headers):
         """
@@ -343,13 +347,13 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
     def get_dowload_rate_threshold(self):
         """
-        This method gets the highest recorded download rate from max_download.txt, adds 10% and returns
+        This method gets the highest recorded download rate from max_download.txt, adds 20% and returns
         the values
         :return: float, max download rate
         """
         f = open('max_download.txt', 'r')
         max_download_rate = float(f.readline())
-        max_download_rate *= 1.1
+        max_download_rate *= 1.20
         return max_download_rate
 
     def check_download_rate(self, thread_lock, current_connection, response_headers):
@@ -394,7 +398,8 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
                 self.update_score(current_connection, -100, thread_lock)
                 self.update_connection_cache(current_connection, 'user_agent_penalty', thread_lock, True)
                 print('No user agent string 100 deducted from connection score')
-                print('user_agent_penalty updated to: %s' % current_connection['user_agent_penalty'])
+                print('user_agent_penalty '
+                      'updated to: %s' % current_connection['user_agent_penalty'])
 
     def update_score(self, current_connection, number, thread_lock):
         """
@@ -471,7 +476,6 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :param current_connection for the current connection
         :return: float, average interval between connections
         """
-        global connection_cache
         connection_times = current_connection['connection_times']
         connection_times.append(time.time())
         previous_connection_time = 0
@@ -485,6 +489,17 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         if connection_intervals:
             avg = get_mean(connection_intervals)
             return avg
+
+    def get_request_velocity_threshold(self):
+        """
+        This method gets the highest recorded request velocity from max_request_velocity.txt, adds 20% and returns
+        the values
+        :return: float, max request velocity
+        """
+        f = open('max_request_velocity.txt', 'r')
+        max_request_velocity = float(f.readline())
+        max_request_velocity *= 1.20
+        return max_request_velocity
 
     def calculate_request_threshold(self, requests_per_second):
         """
@@ -519,7 +534,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :return: none
         """
         min_time = 60.0
-        max_connections_per_second = 10
+        max_connections_per_second = self.get_request_velocity_threshold()
         threshold = self.calculate_request_threshold(max_connections_per_second)
         interval_average = self.calculate_request_interval_average(current_connection)
         if interval_average is not None and self.time_since_first_request(current_connection) > min_time:
@@ -556,10 +571,12 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
                                  'connection_times': [],
                                  'download_data': [],
                                  'user_agent_penalty': False,
-                                 'request_velocity_penalty': False,
+                                 'request_velocity_penal'
+                                 'ty': False,
                                  'ddos_token_penalty': False,
                                  'ddos_token_received': False,
-                                 'download_rate_penalty': False})
+                                 'download_rate_penalty': False,
+                                 'page_requests': []})
         thread_lock.release()
 
     def test_connection_score(self, current_connection):

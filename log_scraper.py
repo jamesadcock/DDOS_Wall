@@ -66,18 +66,47 @@ def get_maximum_download():
                     maximum = avg
             i += 1
 
+    write_to_file('max_download.txt', maximum)
+    return maximum
+
+def get_maximum_request_velocity():
+    global client_data
+    update_client_data()
+    moving_average_period = 60.0
+    try:
+        start_time = int(client_data[0]['download_data'][0]['time'])
+    except IndexError:
+        print 'No log data'
+        exit()
+    end_time = start_time + moving_average_period
+    maximum = 0
+    for connection in client_data:
+        download_data_length = len(connection['download_data'])
+        i = 0
+        while i <= download_data_length:
+            total = 0
+            for response in connection['download_data']:
+                if response['time'] >= start_time + i and response['time'] <= end_time + i:
+                    total += 1.0
+                avg = total / moving_average_period
+                if avg > maximum:
+                    maximum = avg
+            i += 1
+
+    write_to_file('max_request_velocity.txt', maximum)
     return maximum
 
 
-def write_max_download_to_file():
+def write_to_file(file_name, data):
     """
     This method gets the maximum download value and writes it to a file max_download.txt
     :return:
     """
-    f = open('max_download.txt', 'w')
-    f.write(str(get_maximum_download()))
+    f = open(file_name, 'w')
+    f.write(str(data))
     f.close()
 
 
 if __name__ == '__main__':
-    write_max_download_to_file()
+    get_maximum_download()
+    get_maximum_request_velocity()
