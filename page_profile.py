@@ -23,7 +23,6 @@ def create_page_profile(base_url):
     :param base_url: The base url for the server
     :return: page_profile, list {page_name: page_name, resources: [resource1, resource2, ...] }
     """
-    base_url = base_url
     page_name = '/'
     url = base_url + page_name  # url of home page
     links = list()
@@ -33,14 +32,21 @@ def create_page_profile(base_url):
     index = 0
     while True:  # continue to spider site
         resources = list()  # list of external page resources, CSS, JavaScript, images
-        soup = BeautifulSoup.BeautifulSoup(urllib2.urlopen(links[index]).read())  # soup object containing page HTML
-        resources = get_resources(resources, soup, base_url)  # get page resources
-        links = get_links(links, soup, base_url)  # get a list of all the links on th page
-        links = remove_duplicates(links)  # remove any duplicate link for the list
-        page_profile.append({'page_name': links[index], 'resources': resources})
-        if len(links) - 1 == index:  # keep spidering until end of links list
-            break
-        index += 1
+        try:
+            page_object = BeautifulSoup.BeautifulSoup(urllib2.urlopen(links[index]).read())
+            resources = get_resources(resources, page_object, base_url)  # get page resources
+            links = get_links(links, page_object, base_url)  # get a list of all the links on th page
+            links = remove_duplicates(links)  # remove any duplicate link for the list
+            page_profile.append({'page_name': convert_to_relative_path(links[index]), 'resources': resources})
+            if len(links) - 1 == index:  # keep spidering until end of links list
+                break
+            index += 1
+        except urllib2.HTTPError:  # if 404 page not found
+            del links[index]  # delete path
+            index -= 1
+            if len(links) - 1 == index:  # keep spidering until end of links list
+                break
+
     return page_profile
 
 
@@ -59,6 +65,23 @@ def convert_to_absolute_path(path, base_url):
         url = urlparse.urlparse(base_url)
         path = path.replace('/', '')
         path = url.scheme + '://' + url.hostname + '/' + path + url.query
+        return path
+
+
+def convert_to_relative_path(path):
+    """
+    This method takes absolute path and converts it to a relative path.  If a relative path is provided
+    it is just returned
+    :param path: string, the path to be converted
+    :param base_url: string, the base URL, used to create absolute path
+    :return:  String, the absolute path
+    """
+    match = re.search(r'^http', path)
+    if not match:  # if path is already relative then return as ia
+        return path
+    else:  # if it is relative path use ase_url to convert to an absolute path
+        url = urlparse.urlparse(path)
+        path = url.path
         return path
 
 
@@ -98,14 +121,14 @@ def get_resources(resources, soup, base_url):
     # find src attribute in img tags
     for image in images:
         try:
-            resources.append(image['src'])
+            resources.append(str(image['src']))
         except KeyError:  # if none found do nothing
             pass
 
     # find href attribute in link tags
     for style_sheet in style_sheets:
         try:
-            resources.append(style_sheet['href'])
+            resources.append(str(style_sheet['href']))
         except KeyError:
             pass
 
@@ -115,7 +138,7 @@ def get_resources(resources, soup, base_url):
             if is_non_site_link(script['src'], base_url):
                 pass
             else:
-                resources.append(script['src'])
+                resources.append(str(script['src']))
         except KeyError:
             pass
 
@@ -137,7 +160,7 @@ def get_links(links, soup, base_url):
                 pass
             else:
                 url = convert_to_absolute_path(hyperlink['href'], base_url)
-                links.append(url)
+                links.append(str(url))
         return links
     except:
         return links
@@ -163,4 +186,4 @@ def is_non_site_link(link, base_url):
 
 if __name__ == '__main__':
     uri = raw_input("Please enter base URL, e.g. http://example.com: ")
-    print(create_page_profile(uri))
+    print create_page_profile(uri)

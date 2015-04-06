@@ -1,7 +1,3 @@
-import re
-import time
-import datetime
-from datetime import timedelta
 import apache_log_parser
 
 client_data = list()
@@ -46,28 +42,40 @@ def update_client_data():
 def get_maximum_download():
     global client_data
     update_client_data()
+    moving_average_period = 60.0
     try:
         start_time = int(client_data[0]['download_data'][0]['time'])
     except IndexError:
         print 'No log data'
         exit()
-    end_time = start_time + 60
+    end_time = start_time + moving_average_period
     maximum = 0
-    for connection in client_data:
-        download_data_length = len(connection['download_data'])
+    for client in client_data:
+        first_request_time = client['download_data'][0]['time']  # the first time the client made a request
+        last_request_time = client['download_data'][len(client['download_data'])-1]['time']  # last client request time
+        request_duration = last_request_time - first_request_time  # number of seconds between first and last request
         i = 0
-        while i <= download_data_length:
+        # while less than the number of seconds between the first and last request keep iterating and incrementing i by
+        # 1.
+        while i <= request_duration:
             total = 0
-            for response in connection['download_data']:
+            # check if each time is between that start time and end time for the moving average period and if it is
+            # add the amount of data sent in the response to the total.  Then calculate the
+            # current average by dividing the total amount of data by the moving average time period
+            # e.g. if moving time period is 60 seconds andi n the last 60 seconds the client has downloaded
+            # 1000 byes the average would be 50 bytes per second
+            # if this the highest value encountered so far it is stored in the maximum variable
+            for response in client['download_data']:
                 if response['time'] >= start_time + i and response['time'] <= end_time + i:
                     total += float(response['size'])
-                avg = total / 60.0
+                avg = total / moving_average_period
                 if avg > maximum:
                     maximum = avg
             i += 1
 
     write_to_file('max_download.txt', maximum)
     return maximum
+
 
 def get_maximum_request_velocity():
     global client_data
@@ -80,12 +88,22 @@ def get_maximum_request_velocity():
         exit()
     end_time = start_time + moving_average_period
     maximum = 0
-    for connection in client_data:
-        download_data_length = len(connection['download_data'])
+    for client in client_data:
+        first_request_time = client['download_data'][0]['time']  # the first time the client made a request
+        last_request_time = client['download_data'][len(client['download_data'])-1]['time']  # last client request time
+        request_duration = last_request_time - first_request_time  # number of seconds between first and last request
         i = 0
-        while i <= download_data_length:
+        # while less than the number of seconds between the first and last request keep iterating and incrementing i by
+        # 1.
+        while i <= request_duration:
             total = 0
-            for response in connection['download_data']:
+            # check if each time is between that start time and end time for the moving average period and if it is
+            # increment the total variable by 1 to indicate another request in this time period.  Then calculate the
+            # current average by dividing the total requests by the moving average time period e.g. if moving time
+            # period is 60 seconds and in the last 60 seconds the client has made 20  requests the average
+            # would be 0.33 requests per second if this the highest value encountered so far it is stored
+            # in the maximum variable
+            for response in client['download_data']:
                 if response['time'] >= start_time + i and response['time'] <= end_time + i:
                     total += 1.0
                 avg = total / moving_average_period
@@ -108,5 +126,5 @@ def write_to_file(file_name, data):
 
 
 if __name__ == '__main__':
-    get_maximum_download()
-    get_maximum_request_velocity()
+    print get_maximum_download()
+    print get_maximum_request_velocity()

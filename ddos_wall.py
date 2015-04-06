@@ -12,6 +12,8 @@ import threading
 import sysmon
 import sys
 import page_profile
+from random import randint
+import hashlib
 
 
 if __name__ == '__main__':
@@ -172,7 +174,7 @@ class Monitoring(threading.Thread):
 
         del stats[0]
         stats.append(latest_reading)
-        print("Latest %s reading is %0.2f" % (resource, latest_reading))
+        #  print("Latest %s reading is %0.2f" % (resource, latest_reading))
         time.sleep(interval)
         return stats
 
@@ -225,7 +227,7 @@ class Monitoring(threading.Thread):
         print("System monitor engaged")
         while True:
             system_load = 100 * float(get_mean(stats))
-            print "System load is %0.2f" % system_load
+            # print "System load is %0.2f" % system_load
             #  If system load below orange threshold change status to green
             if system_load < resource_orange_threshold and system_status != 'green':
                 system_status = 'green'
@@ -244,9 +246,10 @@ class Monitoring(threading.Thread):
                 system_status = 'red'
                 print("WARNING: System status updated to Red")
             else:
-                print("No conditions met")
-                print("Status: %s, System_load: %0.2f, Orange_threshold: %0.2f, Red_threshold: %0.2f" %
-                      (system_status, system_load, resource_orange_threshold, resource_red_threshold))
+                pass
+                # print("No conditions met")
+                # print("Status: %s, System_load: %0.2f, Orange_threshold: %0.2f, Red_threshold: %0.2f" %
+                #      (system_status, system_load, resource_orange_threshold, resource_red_threshold))
 
             stats = self.update_system_load(INTERVAL, stats, resource)
 
@@ -261,11 +264,9 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         response = urllib.urlopen(uri)
         self.copyfile(response, self.wfile)
         headers = self.generate_header_dic(self.headers.headers)
-        print(self.path)
         ip_address = self.client_address[0]  # get client iP address
-        self.process_request(ip_address, headers)
+        self.process_request(ip_address, headers, self.path)
         self.process_response(ip_address, response.headers)
-        #  print(response.url)
 
 
     def generate_header_dic(self, header_strings):
@@ -304,13 +305,50 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
             subprocess.call("./rules.sh")
             print("IP address " + ip_address + " blocked")
 
-    def check_associated_resource_requests(self, ):
+    def check_request_profile(self, current_connection, path, thread_lock):
         """
-        This method checks that the connecting client has also requested any resources that are referenced
-        by the page.  The may be css, javascript, images, etc.
-        :return:
+        check if the current request is for an expected resource
+        :param current_connection:
+        :param path: dictionary
+        :return: None
         """
-        global profile
+        expected_resource = False
+        #  if the resource being requested matches any in the list
+        if current_connection['next_resource']:
+            for resource in current_connection['next_resource']:
+                if path[0] == '/':
+                    path = path[1:]
+                if resource == path:
+                    expected_resource = True
+                    current_connection['additional_resource_request_received'] = True
+                    print('expected resource found')
+                    print("current_connection['additional_resource_request_received'] updated to %s" %
+                          current_connection['additional_resource_request_received'])
+
+            if not expected_resource:
+                self.update_score(current_connection, -100, thread_lock)
+                self.update_connection_cache(current_connection, 'request_profile_penalty', thread_lock, True)
+                print('Expected resources not requested penalty applied')
+                print('request_profile_penalty updated to: %s' % current_connection['request_profile_penalty'])
+                current_connection['request_profile_penalty'] = True
+        else:
+            print('no resource expected')
+
+    def update_next_page(self, current_connection, path):
+        """
+        This method adds the set of resources to the next resource object in the connection cache
+        that is expected after a document request
+        :param current_connection: dictionary
+        :param path: string, the path of the resource which is current being requested
+        :return: None
+        """
+        resource_found = False
+        for page in profile:
+            if page['page_name'] == path:
+                current_connection['next_resource'] = page['resources']
+                resource_found = True
+        if not resource_found:
+            current_connection['next_resource'] = []
 
     def get_download_data(self, response_headers):
         """
@@ -326,9 +364,9 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
     def calculate_download_rate(self, current_connection, response_headers, time_period=60):
         """
 
-        :param current_connection:
-        :param response_headers:
-        :param time_period:
+        :param current_connection: current connection object
+        :param response_headers: the response header object
+        :param time_period: the time period that th
         :return: float, data per second
         """
         self.update_download_data(current_connection, response_headers)
@@ -340,7 +378,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         if time_since_first_response > time_period:
             for data in download_data:
                 seconds_since_request = int(latest_response_time) - int(data['time'])
-                if seconds_since_request <= time_period:  # was the response in the last x seconds 2539 <= 60
+                if seconds_since_request <= time_period:  # was the response in the last x seconds
                     total_data += float(data['data'])  # calculate data requested in the last x second
             data_per_second = total_data / float(time_period)
             return data_per_second
@@ -426,6 +464,24 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         current_connection[key] = value
         thread_lock.release()
 
+    def hash_value(self, value):
+        """
+        This method takes a string and returns a SHA256 hash of the string
+        :param value: String to be hashed
+        :return: string, SHA256 hash
+        """
+        h = hashlib.sha256()
+        h.update(str(value))
+        return h.hexdigest()
+
+    def generate_token(self):
+            """
+            This method generates a 20 digit token
+            :return:string, 20 digit number
+            """
+            token = randint(100000000000000000, 999999999999999999)
+            return str(token)
+
     def check_for_ddos_token(self, headers, current_connection, thread_lock):
         """
         This method checks if the request from the current connection includes a ddos token in the cookies,
@@ -437,26 +493,27 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :param thread_lock: instance of thread.lock
         :return: None
         """
-        ddos_token = '5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5'
-        try:
+        ddos_token = self.hash_value(current_connection['ddos_token'])  # create SHA256 hash of DDoS_Token
+        try:  # try to get cookies
             cookies = headers['Cookie']
+            #  if DDoS token found and DDoS token has not already been recived
             if cookies.find(ddos_token) > 0 and current_connection['ddos_token_received'] is False:
                 print('DDoS token received')
                 if current_connection['ddos_token_penalty'] is True:
                     self.update_score(current_connection, 100, thread_lock)
                     current_connection['ddos_token_penalty'] = False
-
                 current_connection['ddos_token_received'] = True
                 print("ddos_token_received changed to %s" % current_connection['ddos_token_received'])
-
+            #  if DDoS Token is not received, it is not the first request from the client
             elif current_connection['ddos_token_penalty'] is False and \
-                    current_connection['ddos_token_received'] is False:
+                    current_connection['ddos_token_received'] is False and \
+                    len(current_connection['connection_times']) > 1:
                 print('DDoS token not found')
                 self.update_score(current_connection, -100, thread_lock)
                 print('No DDoS token received')
                 self.update_connection_cache(current_connection, 'ddos_token_penalty', thread_lock)
                 print('ddoS_token_penalty updated to: %s' % current_connection['ddos_token_penalty'])
-        except KeyError:
+        except KeyError:  # if the headers contain no cookies and it is not the first request
             if len(current_connection['connection_times']) > 1 and current_connection['ddos_token_penalty'] is False:
                 print('DDoS token not found')
                 self.update_score(current_connection, -100, thread_lock)
@@ -571,12 +628,14 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
                                  'connection_times': [],
                                  'download_data': [],
                                  'user_agent_penalty': False,
-                                 'request_velocity_penal'
-                                 'ty': False,
+                                 'request_velocity_penalty': False,
                                  'ddos_token_penalty': False,
                                  'ddos_token_received': False,
+                                 'ddos_token': '12345',
                                  'download_rate_penalty': False,
-                                 'page_requests': []})
+                                 'request_profile_penalty': False,
+                                 'additional_resource_request_received': False,
+                                 'next_resource': []})
         thread_lock.release()
 
     def test_connection_score(self, current_connection):
@@ -597,7 +656,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
                 self.block_ip_address(current_connection['ip_address'])
 
 
-    def process_request(self, ip_address, headers):
+    def process_request(self, ip_address, headers, path):
         """
         This method check if current connection has an entry in the connection cache and
         if not creates one.  It then runs the anomaly detection algorithms which updates
@@ -615,6 +674,10 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         self.check_user_agent_string(headers, current_connection, thread_lock)
         self.check_request_velocity(current_connection, thread_lock)
         self.check_for_ddos_token(headers, current_connection, thread_lock)
+        if not current_connection['additional_resource_request_received']:
+            print('current connection received: %s' % current_connection['additional_resource_request_received'])
+            self.check_request_profile(current_connection, path, thread_lock)
+            self.update_next_page(current_connection, path)
         self.test_connection_score(current_connection)
 
     def process_response(self, ip_address, headers):
