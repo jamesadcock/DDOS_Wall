@@ -174,7 +174,7 @@ class Monitoring(threading.Thread):
 
         del stats[0]
         stats.append(latest_reading)
-        #  print("Latest %s reading is %0.2f" % (resource, latest_reading))
+        print("Latest %s reading is %0.2f" % (resource, latest_reading))
         time.sleep(interval)
         return stats
 
@@ -182,13 +182,21 @@ class Monitoring(threading.Thread):
         """
         This method turns on SYN cookies
         """
-        f = open("/etc/sysctl.conf", "a")
-        f.write("net.ipv4.tcp_syncookies = 1")
+        f = open("/etc/sysctl.conf", "r")
+        sysyctl = f.readlines()
+        syn_cookies_on = False
+        for line in sysyctl:  # check if syn cookies are already turned on
+            if re.search(r'^net.ipv4.tcp_syncookies = 1', line):
+                syn_cookies_on = True
+            else:
+                syn_cookies_on = False
         f.close()
-        subprocess.call(['sysctl', '-p'])
-        print("SYN cookies have been turn on")
-
-
+        if not syn_cookies_on:
+                f = open("/etc/sysctl.conf", "a")
+                f.write("net.ipv4.tcp_syncookies = 1")
+                f.close()
+                subprocess.call(['sysctl', '-p'])
+                print("SYN cookies have been turn on")
 
     def run(self):
         """
@@ -227,7 +235,7 @@ class Monitoring(threading.Thread):
         print("System monitor engaged")
         while True:
             system_load = 100 * float(get_mean(stats))
-            # print "System load is %0.2f" % system_load
+            print "System load is %0.2f" % system_load
             #  If system load below orange threshold change status to green
             if system_load < resource_orange_threshold and system_status != 'green':
                 system_status = 'green'
@@ -239,18 +247,16 @@ class Monitoring(threading.Thread):
                 print("ALERT: System status updated to orange")
                 if syn_cookies == 0:
                     print("Turning on SYN Cookies")
-                    #  self.turn_on_syn_cookies()
+                    self.turn_on_syn_cookies()
                     syn_cookies = 1
             #  If system load exceeds red threshold change system status to red
             elif system_load > resource_red_threshold and system_status != 'red':
                 system_status = 'red'
                 print("WARNING: System status updated to Red")
             else:
-                pass
-                # print("No conditions met")
-                # print("Status: %s, System_load: %0.2f, Orange_threshold: %0.2f, Red_threshold: %0.2f" %
-                #      (system_status, system_load, resource_orange_threshold, resource_red_threshold))
-
+                print("No conditions met")
+                print("Status: %s, System_load: %0.2f, Orange_threshold: %0.2f, Red_threshold: %0.2f" %
+                      (system_status, system_load, resource_orange_threshold, resource_red_threshold))
             stats = self.update_system_load(INTERVAL, stats, resource)
 
 
