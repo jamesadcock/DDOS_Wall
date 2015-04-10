@@ -1,4 +1,5 @@
 import apache_log_parser
+import os
 
 client_data = list()
 
@@ -73,7 +74,7 @@ def get_maximum_download():
                     maximum = avg
             i += 1
 
-    write_to_file('max_download.txt', maximum)
+    write_to_file('resources/max_download.txt', maximum)
     return maximum
 
 
@@ -111,7 +112,7 @@ def get_maximum_request_velocity():
                     maximum = avg
             i += 1
 
-    write_to_file('max_request_velocity.txt', maximum)
+    write_to_file('resources/max_request_velocity.txt', maximum)
     return maximum
 
 
@@ -120,6 +121,9 @@ def write_to_file(file_name, data):
     This method gets the maximum download value and writes it to a file max_download.txt
     :return:
     """
+    directory = "resources"
+    if not os.path.exists(directory):
+        os.makedirs(directory)
     f = open(file_name, 'w')
     f.write(str(data))
     f.close()

@@ -28,7 +28,6 @@ def create_page_profile(base_url):
     links = list()
     links.append(url)
     page_profile = list()
-
     index = 0
     while True:  # continue to spider site
         resources = list()  # list of external page resources, CSS, JavaScript, images
@@ -52,6 +51,7 @@ def create_page_profile(base_url):
 
 def convert_to_absolute_path(path, base_url):
     """
+
     This method take a relative path and converts it to a absolute path.  If a absolute path is provided
     it is just returned
     :param path: string, the path to be converted
@@ -121,14 +121,14 @@ def get_resources(resources, soup, base_url):
     # find src attribute in img tags
     for image in images:
         try:
-            resources.append(str(image['src']))
+            resources.append(convert_to_relative_path(str(image['src'])))
         except KeyError:  # if none found do nothing
             pass
 
     # find href attribute in link tags
     for style_sheet in style_sheets:
         try:
-            resources.append(str(style_sheet['href']))
+            resources.append(convert_to_relative_path(str(style_sheet['href'])))
         except KeyError:
             pass
 
@@ -138,7 +138,7 @@ def get_resources(resources, soup, base_url):
             if is_non_site_link(script['src'], base_url):
                 pass
             else:
-                resources.append(str(script['src']))
+                resources.append(convert_to_relative_path(str(script['src'])))
         except KeyError:
             pass
 

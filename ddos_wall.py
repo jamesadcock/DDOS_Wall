@@ -14,6 +14,7 @@ import sys
 import page_profile
 from random import randint
 import hashlib
+import os
 
 
 if __name__ == '__main__':
@@ -83,11 +84,14 @@ def write_firewall_script():
                                             INTERFACE, SERVER_IP, SERVER_IP, PORT,
                                             INTERFACE, SERVER_IP, PORT)
 
-    rules = file('rules.sh', 'w')
+    directory = 'resources'
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    rules = file('resources/rules.sh', 'w')
     rules.write(firewall_script)
     rules.close()
-    subprocess.call(["chmod", "755", "rules.sh"])
-    subprocess.call("./rules.sh")
+    subprocess.call(["chmod", "755", "resources/rules.sh"])
+    subprocess.call("./resources/rules.sh")
 
 
 class Monitoring(threading.Thread):
@@ -100,7 +104,7 @@ class Monitoring(threading.Thread):
         :return: dict, containing thresholds
         """
         try:
-            f = open('server_stats.txt', 'r')
+            f = open('resources/server_stats.txt', 'r')
         except IOError:
             print("server_stats.txt does not exist please run ddosw_baseline")
             sys.exit()
@@ -298,17 +302,17 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         """
 
         rule = "\niptables -A INPUT -s " + ip_address + " -j DROP"
-        rules = open('rules.sh', 'r')
+        rules = open('resources/rules.sh', 'r')
         regex = re.compile(ip_address, re.MULTILINE)
         match = regex.search(rules.read())
         rules.close()
-        # check if a rule to block this ip has already been written, this can happen due to forking
+        # check if a rule to block this ip has already been written, this can happen due to threading
         if not match:
-            rules = open("rules.sh", "a")
+            rules = open("resources/rules.sh", "a")
             rules.write(rule)
             rules.close()
-            subprocess.call(["chmod", "755", "rules.sh"])
-            subprocess.call("./rules.sh")
+            subprocess.call(["chmod", "755", "resources/rules.sh"])
+            subprocess.call("./resources/rules.sh")
             print("IP address " + ip_address + " blocked")
 
     def check_request_profile(self, current_connection, path, thread_lock):
@@ -322,7 +326,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         #  if the resource being requested matches any in the list
         if current_connection['next_resource']:
             for resource in current_connection['next_resource']:
-                if path[0] == '/':
+                if path[0] == '/' and len(path) > 1:
                     path = path[1:]
                 if resource == path:
                     expected_resource = True
@@ -332,11 +336,12 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
                           current_connection['additional_resource_request_received'])
 
             if not expected_resource:
-                self.update_score(current_connection, -100, thread_lock)
-                self.update_connection_cache(current_connection, 'request_profile_penalty', thread_lock, True)
-                print('Expected resources not requested penalty applied')
-                print('request_profile_penalty updated to: %s' % current_connection['request_profile_penalty'])
-                current_connection['request_profile_penalty'] = True
+                if not current_connection['request_profile_penalty']:
+                    self.update_score(current_connection, -100, thread_lock)
+                    self.update_connection_cache(current_connection, 'request_profile_penalty', thread_lock, True)
+                    print('Expected resources not requested penalty applied')
+                    print('request_profile_penalty updated to: %s' % current_connection['request_profile_penalty'])
+                    current_connection['request_profile_penalty'] = True
         else:
             print('no resource expected')
 
@@ -395,9 +400,14 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         the values
         :return: float, max download rate
         """
-        f = open('max_download.txt', 'r')
-        max_download_rate = float(f.readline())
-        max_download_rate *= 1.20
+        try:
+            f = open('resources/max_download.txt', 'r')
+            max_download_rate = float(f.readline())
+            max_download_rate *= 1.20
+        except IOError:
+            max_download_rate = 1000
+            print("No max_download.txt file found download rate set at %s, you should run ddosw_baseline first!" %
+                  max_download_rate)
         return max_download_rate
 
     def check_download_rate(self, thread_lock, current_connection, response_headers):
@@ -559,9 +569,14 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         the values
         :return: float, max request velocity
         """
-        f = open('max_request_velocity.txt', 'r')
-        max_request_velocity = float(f.readline())
-        max_request_velocity *= 1.20
+        try:
+            f = open('resources/max_request_velocity.txt', 'r')
+            max_request_velocity = float(f.readline())
+            max_request_velocity *= 1.20
+        except IOError:
+            max_request_velocity = 10
+            print("No max_request_velocity.txt file found download rate set at %s, you should run ddosw_baseline first!"
+                  % max_request_velocity)
         return max_request_velocity
 
     def calculate_request_threshold(self, requests_per_second):
@@ -681,10 +696,9 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         self.check_request_velocity(current_connection, thread_lock)
         self.check_for_ddos_token(headers, current_connection, thread_lock)
         if not current_connection['additional_resource_request_received']:
-            print('current connection received: %s' % current_connection['additional_resource_request_received'])
             self.check_request_profile(current_connection, path, thread_lock)
             self.update_next_page(current_connection, path)
-        self.test_connection_score(current_connection)
+            self.test_connection_score(current_connection)
 
     def process_response(self, ip_address, headers):
         thread_lock = threading.Lock()

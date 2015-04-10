@@ -40,13 +40,13 @@ class Timezone(datetime.tzinfo):
         return self.name
 
 
-def parse_access_logs(location='/var/log/apache2/access.log'):
+def parse_access_logs(path_to_access_log='/var/log/apache2/access.log'):
     """parsers the apache access log file and returns a list of dictionary objects.
     The dictionary object contains each element of a log entry split into key value pairs.
-    :param location: string, the location of the apache logs
+    :param path_to_access_log: string, the location of the apache logs
     :return: logs, list of dictionary objects
     """
-    f = open(location, 'r')
+    f = open(path_to_access_log, 'r')
     access_log = f.readlines()
     #  regex to find each element in log file
     elements = [

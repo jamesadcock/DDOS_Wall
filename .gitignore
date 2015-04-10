@@ -51,6 +51,7 @@ target/
 .idea
 
 # project specific
+resources/
 rules.sh
 cpu_stats.txt
 memory_baseline.txt
