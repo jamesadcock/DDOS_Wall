@@ -17,82 +17,98 @@ import hashlib
 import os
 
 
-if __name__ == '__main__':
-    description = """DDoS_Wall is designed to mitigate common types of DDoS attacks.  It offers system
-     monitoring and will enable TCP cookies if the system is under attack, this helps
-     mitigate SYN flood attacks.  It also provides protection against HTTP based attacks which it
-     will automatically detect and the offending IP addresses will be blocked.  """
-
-    parser = optparse.OptionParser(description=description)
-    parser.add_option('-c', '--cpu_orange', default=0, help='orange threshold for CPU utilisation', metavar='<ARG>')
-    parser.add_option('-C', '--cpu_red', default=0, help='red threshold for CPU utilisation', metavar='<ARG>')
-    parser.add_option('-m', '--memory_orange', default=0, help='orange threshold for RAM usage', metavar='<ARG>')
-    parser.add_option('-M', '--memory_red', default=0, help='red threshold for RAM usage', metavar='<ARG>')
-    parser.add_option('-n', '--network_orange', default=0, help='orange threshold for Network usage', metavar='<ARG>')
-    parser.add_option('-N', '--network_red', default=0, help='red threshold for Network usage', metavar='<ARG>')
-    parser.add_option('-p', '--port', default=1234, help='port that proxy listens on', metavar='<ARG>')
-    parser.add_option('-a', '--ip_address', help='MANDATORY - ip address of server', metavar='<ARG>')
-    parser.add_option('-I', '--interface', default='wlan0', help='the interface forwarding traffic', metavar='<ARG>')
-    parser.add_option('-t', '--time', default=10, help='the number of minutes that threshold is calculated over',
-                      metavar='<ARG>')
-    parser.add_option('-i', '--interval', default=10, help='the interval between polling the server', metavar='<ARG>')
-    parser.add_option('-s', '--setup', action='store_true', default=False,
-                      help='setup DDoS_Wall')
-    parser.add_option('-r', '--reset', action='store_true', default=False, help='resets DDoS_Wall')
-
-    opts, args = parser.parse_args()
-
-    # IP address must be supplied
-    if opts.ip_address is None:
-        print("Please supply an IP Address for the server e.g --ip_address 10.10.10.10")
-        exit(-1)
-
-    PORT = opts.port  # port that proxy listens on
-    SERVER_IP = opts.ip_address  # IP address of server
-    INTERFACE = opts.interface  # the network interface
-    CPU_ORANGE_THRESHOLD = float(opts.cpu_orange)
-    CPU_RED_THRESHOLD = float(opts.cpu_red)
-    RAM_ORANGE_THRESHOLD = float(opts.memory_orange)
-    RAM_RED_THRESHOLD = float(opts.memory_red)
-    NETWORK_ORANGE_THRESHOLD = float(opts.network_orange)
-    NETWORK_RED_THRESHOLD = float(opts.network_red)
-    TIME_PERIOD = opts.time  # how long in minutes the running average for the monitoring should be
-    INTERVAL = opts.interval  # length of tim in seconds between polling resource
-    SETUP = opts.setup  # If setup needs running
-    RESET = opts.reset  # Reset DDoS_Wall
+class Setup():
+    """
+    This class contains methods for setting up DDoS wall
+    """
+    connection_cache = list()
     system_status = 'green'  # The current state that the system is in
     syn_cookies = 0
-    initial_score = 0
     orange_score = -200
-    red_score = -100
-    connection_cache = list()
-    base_url = 'http://%s' % SERVER_IP
-    profile = page_profile.create_page_profile(base_url)
+    red_score = -300
 
+    def __init__(self):
+        pass
 
-def write_firewall_script():
-    """
-    This method creates an iptables script which redirects all traffic for port 80 and port 443
-    to DDoS_Wall on the user supplied port.
-    """
-    firewall_script = """#!/bin/bash\n
-    iptables -F\n
-    iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 80 -j DNAT --to %s:%s\n
-    iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 443 -j DNAT --to %s:%s\n
-    iptables -A FORWARD -p tcp -i %s -d %s --dport %s -j ACCEPT\n
-    \n
-    #automatically generated rules\n """ % (INTERFACE, SERVER_IP, SERVER_IP, PORT,
-                                            INTERFACE, SERVER_IP, SERVER_IP, PORT,
-                                            INTERFACE, SERVER_IP, PORT)
+    @staticmethod
+    def parse_options():
+        """
+        This method parse the command line options that are passed to the application
+        :return:
+        """
+        description = """DDoS_Wall is designed to mitigate common types of DDoS attacks.  It offers system
+        monitoring and will enable TCP cookies if the system is under attack, this helps
+        mitigate SYN flood attacks.  It also provides protection against HTTP based attacks which it
+        will automatically detect and the offending IP addresses will be blocked.  """
+        parser = optparse.OptionParser(description=description)
+        parser.add_option('-c', '--cpu_orange', default=0, help='orange threshold for CPU utilisation', metavar='<ARG>')
+        parser.add_option('-C', '--cpu_red', default=0, help='red threshold for CPU utilisation', metavar='<ARG>')
+        parser.add_option('-m', '--memory_orange', default=0, help='orange threshold for RAM usage', metavar='<ARG>')
+        parser.add_option('-M', '--memory_red', default=0, help='red threshold for RAM usage', metavar='<ARG>')
+        parser.add_option('-n', '--network_orange', default=0, help='orange threshold for Network usage', metavar='<ARG>')
+        parser.add_option('-N', '--network_red', default=0, help='red threshold for Network usage', metavar='<ARG>')
+        parser.add_option('-p', '--port', default=1234, help='port that proxy listens on', metavar='<ARG>')
+        parser.add_option('-a', '--ip_address', help='MANDATORY - ip address of server', metavar='<ARG>')
+        parser.add_option('-I', '--interface', default='wlan0', help='the interface forwarding traffic', metavar='<ARG>')
+        parser.add_option('-t', '--time', default=10, help='the number of minutes that threshold is calculated over',
+                          metavar='<ARG>')
+        parser.add_option('-i', '--interval', default=10, help='the interval between polling the server', metavar='<ARG>')
+        parser.add_option('-s', '--setup', action='store_true', default=False,
+                          help='setup DDoS_Wall')
+        parser.add_option('-r', '--reset', action='store_true', default=False, help='resets DDoS_Wall')
 
-    directory = 'resources'
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-    rules = file('resources/rules.sh', 'w')
-    rules.write(firewall_script)
-    rules.close()
-    subprocess.call(["chmod", "755", "resources/rules.sh"])
-    subprocess.call("./resources/rules.sh")
+        opts, args = parser.parse_args()
+
+        # IP address must be supplied
+        if opts.ip_address is None:
+            print("Please supply an IP Address for the server e.g --ip_address 10.10.10.10")
+            exit(-1)
+
+        options = dict()
+        options['port'] = opts.port  # port that proxy listens on
+        options['ip_address'] = opts.ip_address  # IP address of server
+        options['interface'] = opts.interface  # the network interface
+        options['cpu_orange_threshold'] = float(opts.cpu_orange)
+        options['cpu_red_threshold'] = float(opts.cpu_red)
+        options['ram_orange_threshold'] = float(opts.memory_orange)
+        options['ram_red_threshold'] = float(opts.memory_red)
+        options['network_orange_threshold'] = float(opts.network_orange)
+        options['network_red_threshold'] = float(opts.network_red)
+        options['time_period'] = opts.time  # how long in minutes the running average for the monitoring should be
+        options['interval'] = opts.interval # length of tim in seconds between polling resource
+        options['setup'] = opts.setup  # If setup needs running
+        options['reset'] = opts.reset  # Reset DDoS_Wall
+
+        return options
+
+    @staticmethod
+    def write_firewall_script():
+        """
+        This method creates an iptables script which redirects all traffic for port 80 and port 443
+        to DDoS_Wall on the user supplied port.
+        """
+        ip_address = Setup.parse_options()['ip_address']
+        port = Setup.parse_options()['port']
+        interface = Setup.parse_options()['interface']
+
+        firewall_script = """#!/bin/bash\n
+        iptables -F\n
+        iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 80 -j DNAT --to %s:%s\n
+        iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 443 -j DNAT --to %s:%s\n
+        iptables -A FORWARD -p tcp -i %s -d %s --dport %s -j ACCEPT\n
+        \n
+        #automatically generated rules\n """ % (interface, ip_address, ip_address, port,
+                                                interface, ip_address, ip_address, port,
+                                                interface, ip_address, port)
+
+        directory = 'resources'
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        rules = file('resources/rules.sh', 'w')
+        rules.write(firewall_script)
+        rules.close()
+        subprocess.call(["chmod", "755", "resources/rules.sh"])
+        subprocess.call("./resources/rules.sh")
 
 
 class Monitoring(threading.Thread):
@@ -209,60 +225,69 @@ class Monitoring(threading.Thread):
         resource.  If the resource exceeds the threshold SYN cookies are turned on and the polling
         stop
         """
-        global system_status
-        global syn_cookies
+
+        syn_cookies = Setup.syn_cookies
+        cpu_orange_threshold = Setup.parse_options()['cpu_orange_threshold']
+        cpu_red_threshold = Setup.parse_options()['cpu_red_threshold']
+        network_orange_threshold = Setup.parse_options()['network_orange_threshold']
+        network_red_threshold = Setup.parse_options()['network_red_threshold']
+        ram_orange_threshold = Setup.parse_options()['network_orange_threshold']
+        ram_red_threshold = Setup.parse_options()['ram_orange_threshold']
+        interval = Setup.parse_options()['interval']
+        time_period = Setup.parse_options()['time_period']
+
         #  Check which resources should be monitored
-        if CPU_ORANGE_THRESHOLD > 0:
+        if cpu_orange_threshold > 0:
             resource = "cpu"
             print("CPU is being monitored, orange threshold set at %0.2f, red threshold set to %0.2f"
-                  % (CPU_ORANGE_THRESHOLD, CPU_RED_THRESHOLD))
-            resource_orange_threshold = float(CPU_ORANGE_THRESHOLD)
-            resource_red_threshold = float(CPU_RED_THRESHOLD)
-        elif NETWORK_ORANGE_THRESHOLD > 0:
+                  % (cpu_orange_threshold, cpu_red_threshold))
+            resource_orange_threshold = float(cpu_orange_threshold)
+            resource_red_threshold = float(cpu_red_threshold)
+        elif network_orange_threshold > 0:
             resource = "network"
             print("Network usage is being monitored, orange threshold set at %0.2f, red threshold set to %0.2f"
-                  % (NETWORK_ORANGE_THRESHOLD, NETWORK_RED_THRESHOLD))
-            resource_orange_threshold = float(NETWORK_ORANGE_THRESHOLD)
-            resource_red_threshold = float(NETWORK_RED_THRESHOLD)
-        elif RAM_ORANGE_THRESHOLD > 0:
+                  % (network_orange_threshold, network_red_threshold))
+            resource_orange_threshold = float(network_orange_threshold)
+            resource_red_threshold = float(network_red_threshold)
+        elif ram_orange_threshold > 0:
             resource = "memory"
             print("Memory is being monitored, orange threshold set at %0.2f , red threshold set to %0.2f"
-                  % (RAM_ORANGE_THRESHOLD, RAM_RED_THRESHOLD))
-            resource_orange_threshold = float(RAM_ORANGE_THRESHOLD)
-            resource_red_threshold = float(RAM_RED_THRESHOLD)
+                  % (ram_orange_threshold, ram_red_threshold))
+            resource_orange_threshold = float(ram_orange_threshold)
+            resource_red_threshold = float(ram_red_threshold)
         else:
             resource = "cpu"
             resource_orange_threshold = float(self.calculate_thresholds()['orange_cpu_threshold'])
             resource_red_threshold = float(self.calculate_thresholds()['red_cpu_threshold'])
             print("CPU is being monitored, orange threshold set at %0.2f, red threshold set to %0.2f"
                   % (resource_orange_threshold, resource_red_threshold))
-        stats = self.get_system_load(INTERVAL, TIME_PERIOD, resource)
+        stats = self.get_system_load(interval, time_period, resource)
         print("System monitor engaged")
         while True:
             system_load = 100 * float(get_mean(stats))
             print "System load is %0.2f" % system_load
             #  If system load below orange threshold change status to green
-            if system_load < resource_orange_threshold and system_status != 'green':
-                system_status = 'green'
+            if system_load < resource_orange_threshold and Setup.system_status != 'green':
+                Setup.system_status = 'green'
                 print("ALERT: System status green")
             #  If system load exceeds orange threshold change status to orange
             elif system_load  >= resource_orange_threshold  \
-                    and system_load < resource_red_threshold and system_status != 'orange':
-                system_status = 'orange'
+                    and system_load < resource_red_threshold and Setup.system_status != 'orange':
+                Setup.system_status = 'orange'
                 print("ALERT: System status updated to orange")
                 if syn_cookies == 0:
                     print("Turning on SYN Cookies")
                     self.turn_on_syn_cookies()
                     syn_cookies = 1
             #  If system load exceeds red threshold change system status to red
-            elif system_load > resource_red_threshold and system_status != 'red':
-                system_status = 'red'
+            elif system_load > resource_red_threshold and Setup.system_status != 'red':
+                Setup.system_status = 'red'
                 print("WARNING: System status updated to Red")
             else:
                 print("No conditions met")
                 print("Status: %s, System_load: %0.2f, Orange_threshold: %0.2f, Red_threshold: %0.2f" %
-                      (system_status, system_load, resource_orange_threshold, resource_red_threshold))
-            stats = self.update_system_load(INTERVAL, stats, resource)
+                      (Setup.system_status, system_load, resource_orange_threshold, resource_red_threshold))
+            stats = self.update_system_load(interval, stats, resource)
 
 
 class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
@@ -271,14 +296,14 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         This method intercepts the HTTP request and forwards it to server.  Any methods that
         perform checks on the request should be called from this method
         """
-        uri = "http://" + SERVER_IP + self.path
+        server_ip = Setup.parse_options()['ip_address']
+        uri = "http://" + server_ip + self.path
         response = urllib.urlopen(uri)
         self.copyfile(response, self.wfile)
         headers = self.generate_header_dic(self.headers.headers)
         ip_address = self.client_address[0]  # get client iP address
         self.process_request(ip_address, headers, self.path)
         self.process_response(ip_address, response.headers)
-
 
     def generate_header_dic(self, header_strings):
         """
@@ -354,6 +379,8 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :param path: string, the path of the resource which is current being requested
         :return: None
         """
+        base_url = 'http://' + Setup.parse_options()['ip_address']
+        profile = page_profile.create_page_profile(base_url)
         resource_found = False
         for page in profile:
             if page['page_name'] == path:
@@ -423,7 +450,7 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         threshold = self.get_dowload_rate_threshold()
         data_per_second = self.calculate_download_rate(current_connection, response_headers)
         if not current_connection['download_rate_penalty']:
-            if data_per_second > threshold:
+            if data_per_second > threshold and not current_connection['download_rate_penalty']:
                 self.update_score(current_connection, -100, thread_lock)
                 self.update_connection_cache(current_connection, 'download_rate_penalty', thread_lock, True)
                 print('Exceeded download rate 100 deducted from connection score')
@@ -623,21 +650,21 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
                 self.update_connection_cache(current_connection, 'request_velocity_penalty', thread_lock)
                 print('Request_velocity_penalty updated to: %s' % current_connection['request_velocity_penalty'])
 
-    def get_current_connection(self, ip_address):
+    def get_current_connection(self, ip_address, connection_cache):
         """
         This Method gets the current connection from the connection cache.  If the connection does not already have an
         entry it returns None
         :param ip_address: The ip_address of the current connection
         :return: dict for current connection
         """
-        global connection_cache
+
         try:  # Try to find the current connection in the connection cache and return the score.
             current_connection = (item for item in connection_cache if item['ip_address'] == ip_address).next()
             return current_connection
         except StopIteration:  # If the IP address is not found in the connection cache add entry with score of 0.
             return None
 
-    def add_connection_cache_entry(self, ip_address, thread_lock):
+    def add_connection_cache_entry(self, ip_address, thread_lock, connection_cache):
         """
         This method creates a new entry in the connection cache
         :param ip_address: string, ip address of connecting host
@@ -665,18 +692,14 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         This method test if the connection should be blocked based on th current system status
         :return: none
         """
-        global connection_cache
-        global red_score
-        global orange_score
-        global system_status
-
-        if system_status == 'orange':
-            if current_connection['score'] <= orange_score:
+        orange_score = int(Setup.orange_score)
+        red_score = int(Setup.red_score)
+        if Setup.system_status == 'orange':
+            if current_connection['score'] <= int(orange_score):
                 self.block_ip_address(current_connection['ip_address'])
-        elif system_status == 'red':
+        elif Setup.system_status == 'red':
             if current_connection['score'] <= red_score:
                 self.block_ip_address(current_connection['ip_address'])
-
 
     def process_request(self, ip_address, headers, path):
         """
@@ -689,30 +712,33 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :return: None
         """
         thread_lock = threading.Lock()
-        current_connection = self.get_current_connection(ip_address)
+        connection_cache = Setup.connection_cache
+        current_connection = self.get_current_connection(ip_address, connection_cache)
         if current_connection is None:
-            self.add_connection_cache_entry(ip_address, thread_lock)
-            current_connection = self.get_current_connection(ip_address)
+            self.add_connection_cache_entry(ip_address, thread_lock, connection_cache)
+            current_connection = self.get_current_connection(ip_address, connection_cache)
         self.check_user_agent_string(headers, current_connection, thread_lock)
         self.check_request_velocity(current_connection, thread_lock)
         self.check_for_ddos_token(headers, current_connection, thread_lock)
         if not current_connection['additional_resource_request_received']:
             self.check_request_profile(current_connection, path, thread_lock)
             self.update_next_page(current_connection, path)
-            self.test_connection_score(current_connection)
+        self.test_connection_score(current_connection)
 
     def process_response(self, ip_address, headers):
         thread_lock = threading.Lock()
-        current_connection = self.get_current_connection(ip_address)
+        connection_cache = Setup.connection_cache
+        current_connection = self.get_current_connection(ip_address, connection_cache)
         self.check_download_rate(thread_lock, current_connection, headers)
         self.test_connection_score(current_connection)
 
 def start_ddos_wall():
     """This method starts DDoS wall running"""
-    if SETUP or RESET:
-        write_firewall_script()
-    httpd = SocketServer.ThreadingTCPServer(('', PORT), Proxy)
-    print('Proxy is running on port ', PORT)
+
+    if Setup.parse_options()['setup'] or Setup.parse_options()['reset']:
+        Setup.write_firewall_script()
+    httpd = SocketServer.ThreadingTCPServer(('', Setup.parse_options()['port']), Proxy)
+    print('Proxy is running on port ', Setup.parse_options()['port'])
     monitor = Monitoring()
     monitor.start()
     httpd.serve_forever()
