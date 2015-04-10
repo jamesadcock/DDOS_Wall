@@ -18,25 +18,26 @@ import os
 
 
 if __name__ == '__main__':
-    description = """DDoS_Wall is designed to stop common types of DDoS attacks.  It offers system
-     monitoring and will enable TCP cookies if the system is potentially under attack, this helps
-     mitigate SYN flood attacks.  It also provide protection against HTTP based attacks which it
-     will automatically attempt to detect.  The offending IP addresses will be blocked.  """
+    description = """DDoS_Wall is designed to mitigate common types of DDoS attacks.  It offers system
+     monitoring and will enable TCP cookies if the system is under attack, this helps
+     mitigate SYN flood attacks.  It also provides protection against HTTP based attacks which it
+     will automatically detect and the offending IP addresses will be blocked.  """
 
     parser = optparse.OptionParser(description=description)
-    parser.add_option('-c', '--cpu_orange', default=0, help='orange threshold for CPU utilisation')
-    parser.add_option('-C', '--cpu_red', default=0, help='red threshold for CPU utilisation')
-    parser.add_option('-m', '--memory_orange', default=0, help='orange threshold for RAM usage')
-    parser.add_option('-M', '--memory_red', default=0, help='red threshold for RAM usage')
-    parser.add_option('-n', '--network_orange', default=0, help='orange threshold for Network usage')
-    parser.add_option('-N', '--network_red', default=0, help='red threshold for Network usage')
-    parser.add_option('-p', '--port', default=1234, help='port that proxy listens on')
-    parser.add_option('-a', '--ip_address', help='MANDATORY - ip address of server')
-    parser.add_option('-I', '--interface', default='wlan0', help='the interface forwarding traffic')
-    parser.add_option('-t', '--time', default=10, help='the number of minutes that threshold is calculated over')
-    parser.add_option('-i', '--interval', default=10, help='the interval between polling th server')
+    parser.add_option('-c', '--cpu_orange', default=0, help='orange threshold for CPU utilisation', metavar='<ARG>')
+    parser.add_option('-C', '--cpu_red', default=0, help='red threshold for CPU utilisation', metavar='<ARG>')
+    parser.add_option('-m', '--memory_orange', default=0, help='orange threshold for RAM usage', metavar='<ARG>')
+    parser.add_option('-M', '--memory_red', default=0, help='red threshold for RAM usage', metavar='<ARG>')
+    parser.add_option('-n', '--network_orange', default=0, help='orange threshold for Network usage', metavar='<ARG>')
+    parser.add_option('-N', '--network_red', default=0, help='red threshold for Network usage', metavar='<ARG>')
+    parser.add_option('-p', '--port', default=1234, help='port that proxy listens on', metavar='<ARG>')
+    parser.add_option('-a', '--ip_address', help='MANDATORY - ip address of server', metavar='<ARG>')
+    parser.add_option('-I', '--interface', default='wlan0', help='the interface forwarding traffic', metavar='<ARG>')
+    parser.add_option('-t', '--time', default=10, help='the number of minutes that threshold is calculated over',
+                      metavar='<ARG>')
+    parser.add_option('-i', '--interval', default=10, help='the interval between polling the server', metavar='<ARG>')
     parser.add_option('-s', '--setup', action='store_true', default=False,
-                      help='should be used when first running DDoS_Wall')
+                      help='setup DDoS_Wall')
     parser.add_option('-r', '--reset', action='store_true', default=False, help='resets DDoS_Wall')
 
     opts, args = parser.parse_args()
