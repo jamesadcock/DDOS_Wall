@@ -1,5 +1,21 @@
 #!/usr/bin/python
 
+"""
+DDoS Wall is designed to detect and block HTTP based DDoS traffic.  It achieves this by employing a number of
+detection algorithms. If it is identified that a client is part of a DDoS attack its IP address is blocked
+by writing a rule to the firewall.  DDoS_Wall will also configure the Iptables firewall with some basic rules
+and will turn on SYN cookies if the system is potentially under attack.  Before running the ddos_wall command
+please run ddosw_baseline to gain a system baseline.
+DDoS Wall has to be run as root as it must be able to write rules to the firewall.
+DDoW_Wall is designed to be used on a Linux system that is running the Apache web server
+and has been tested on Ubuntu 14.04.
+DDoS_WAll has been developed for research purposes only and should not be used on a production server!
+"""
+
+__author__ = 'James Adcock'
+
+__version__ = "0.1"
+
 import SocketServer
 import SimpleHTTPServer
 import urllib
@@ -33,13 +49,14 @@ class Setup():
     @staticmethod
     def parse_options():
         """
-        This method parse the command line options that are passed to the application
-        :return:
+        This method parses the command line options that are passed to the application
+        :return: options - dictionary containing all of the command line options
         """
         description = """DDoS_Wall is designed to mitigate common types of DDoS attacks.  It offers system
         monitoring and will enable TCP cookies if the system is under attack, this helps
         mitigate SYN flood attacks.  It also provides protection against HTTP based attacks which it
-        will automatically detect and the offending IP addresses will be blocked.  """
+        will automatically detect and the offending IP addresses will be blocked. ddos_wall must be run
+        with root privileges"""
         parser = optparse.OptionParser(description=description)
         parser.add_option('-c', '--cpu_orange', default=0, help='orange threshold for CPU utilisation', metavar='<ARG>')
         parser.add_option('-C', '--cpu_red', default=0, help='red threshold for CPU utilisation', metavar='<ARG>')
@@ -49,7 +66,7 @@ class Setup():
         parser.add_option('-N', '--network_red', default=0, help='red threshold for Network usage', metavar='<ARG>')
         parser.add_option('-p', '--port', default=1234, help='port that proxy listens on', metavar='<ARG>')
         parser.add_option('-a', '--ip_address', help='MANDATORY - ip address of server', metavar='<ARG>')
-        parser.add_option('-I', '--interface', default='wlan0', help='the interface forwarding traffic', metavar='<ARG>')
+        parser.add_option('-I', '--interface', default='eth0', help='the interface forwarding traffic', metavar='<ARG>')
         parser.add_option('-t', '--time', default=10, help='the number of minutes that threshold is calculated over',
                           metavar='<ARG>')
         parser.add_option('-i', '--interval', default=10, help='the interval between polling the server', metavar='<ARG>')
@@ -112,7 +129,7 @@ class Setup():
 
 
 class Monitoring(threading.Thread):
-    """This class contains methods for monitoring the system and turning on SYN Cookies """
+    """This class contains methods for monitoring the system and turnin- g on SYN Cookies """
     def calculate_thresholds(self):
         """
         This method calculates default threshold values which are used if non are specified when DDoS_Wall
@@ -302,8 +319,9 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         self.copyfile(response, self.wfile)
         headers = self.generate_header_dic(self.headers.headers)
         ip_address = self.client_address[0]  # get client iP address
-        self.process_request(ip_address, headers, self.path)
-        self.process_response(ip_address, response.headers)
+        if Setup.system_status != 'green':
+            self.process_request(ip_address, headers, self.path)
+            self.process_response(ip_address, response.headers)
 
     def generate_header_dic(self, header_strings):
         """
@@ -470,7 +488,9 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
     def check_user_agent_string(self, headers, current_connection, thread_lock):
         """ This method check if the current connection has provided a user agent string if it has not 100
          point are deducted from the current connections score
-        :param user_agent: The user agent string of the current connection
+        :param headers: Dict - The header of the current request
+        :param current_connection: Dict - The current_connection object
+        :param thread_lock: instance of thread_lock
         :return: updated score
         """
         try:
