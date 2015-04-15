@@ -106,7 +106,7 @@ def create_baseline(interval, running_time, moving_average_time_period):
     resource_stats = "CPU Average: %0.2f %%\nCPU Max %0.2f %%\nNetwork Average: %0.2f bytes per second\n" \
                      "Network Max: %0.2f bytes per second\nMemory Average: %0.2f MB\nMemory Max: %0.2f MB" % \
                      (average_cpu_utilisation*100, max_cpu_average*100, average_network_usage,
-                      max_network_average, average_memory_usage/100, max_memory_average/100)
+                      max_network_average, average_memory_usage/1000, max_memory_average/1000)
     directory = 'resources'
     if not os.path.exists(directory):
         os.makedirs(directory)
