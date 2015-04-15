@@ -108,15 +108,19 @@ class Setup():
         port = Setup.parse_options()['port']
         interface = Setup.parse_options()['interface']
 
-        firewall_script = """#!/bin/bash\n
-        iptables -F\n
-        iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 80 -j DNAT --to %s:%s\n
-        iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 443 -j DNAT --to %s:%s\n
-        iptables -A FORWARD -p tcp -i %s -d %s --dport %s -j ACCEPT\n
-        \n
-        #automatically generated rules\n """ % (interface, ip_address, ip_address, port,
+        firewall_script = """#!/bin/bash
+        iptables -F
+        iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 80 -j DNAT --to %s:%s
+        iptables -t nat -A PREROUTING -p tcp -i %s -d %s --dport 443 -j DNAT --to %s:%s
+        iptables -A FORWARD -p tcp -i %s -d %s --dport %s -j ACCEPT
+        iptables -A INPUT -i lo -j ACCEPT
+        iptables -A INPUT -p tcp -m tcp --dport %s -j ACCEPT
+        iptables -P OUTPUT ACCEPT
+        iptables -P INPUT DROP
+        """ % (interface, ip_address, ip_address, port,
                                                 interface, ip_address, ip_address, port,
-                                                interface, ip_address, port)
+                                                interface, ip_address, port,
+                                                port)
 
         directory = 'resources'
         if not os.path.exists(directory):
@@ -345,16 +349,23 @@ class Proxy(SimpleHTTPServer.SimpleHTTPRequestHandler):
         :param ip_address: ip address of requesting client
         """
 
-        rule = "\niptables -A INPUT -s " + ip_address + " -j DROP"
+        rule = "iptables -A INPUT -s " + ip_address + " -j DROP\n"
         rules = open('resources/rules.sh', 'r')
         regex = re.compile(ip_address, re.MULTILINE)
         match = regex.search(rules.read())
         rules.close()
         # check if a rule to block this ip has already been written, this can happen due to threading
         if not match:
-            rules = open("resources/rules.sh", "a")
-            rules.write(rule)
-            rules.close()
+            f = open('resources/rules.sh', 'r')
+            rules = f.readlines()
+            f.close()
+
+            rules.insert(6, rule)
+
+            f = open('resources/rules.sh', 'w')
+            rules = "".join(rules)
+            f.write(rules)
+            f.close()
             subprocess.call(["chmod", "755", "resources/rules.sh"])
             subprocess.call("./resources/rules.sh")
             print("IP address " + ip_address + " blocked")
